@@ -1,0 +1,249 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: train-command-system
+  namespace: llm-nursery
+spec:
+  template:
+    spec:
+      containers:
+      - name: trainer
+        image: llm-trainer:v2
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "============================================================"
+            echo "COMMAND SYSTEM TRAINING - Teaching Response Formats"
+            echo "============================================================"
+            echo "Commands: #Q (question), #T (task), #V (verify), #S (scan)"
+            echo ""
+
+            python << 'PYTHON_EOF'
+            import json
+            import torch
+            import os
+            from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
+            from torch.utils.data import Dataset
+            from datetime import datetime
+
+            # Check if we have a previous model to build on
+            base_model_path = "/storage/models/basic-level"
+            if os.path.exists(base_model_path):
+                print(f"Loading trained model from {base_model_path}...")
+                tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+                model = AutoModelForCausalLM.from_pretrained(base_model_path)
+                print("Loaded previous training checkpoint!")
+            else:
+                print("Loading fresh DistilGPT2 model...")
+                tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
+                model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+
+            tokenizer.pad_token = tokenizer.eos_token
+            model.config.pad_token_id = tokenizer.eos_token_id
+            print("Model loaded\n")
+
+            print("Loading command training data...")
+            with open('/data/training-data.json', 'r') as f:
+                training_examples = json.load(f)
+            print(f"Loaded {len(training_examples)} command examples\n")
+
+            # Count command types
+            counts = {"#Q": 0, "#T": 0, "#V": 0, "#S": 0}
+            for ex in training_examples:
+                for cmd in counts.keys():
+                    if ex["question"].startswith(cmd):
+                        counts[cmd] += 1
+                        break
+            print(f"Command distribution: {counts}\n")
+
+            class CommandDataset(Dataset):
+                def __init__(self, examples, tokenizer, max_length=512):
+                    self.examples = examples
+                    self.tokenizer = tokenizer
+                    self.max_length = max_length
+
+                def __len__(self):
+                    return len(self.examples)
+
+                def __getitem__(self, idx):
+                    example = self.examples[idx]
+                    # Format: command\nresponse
+                    text = f"{example['question']}\n{example['answer']}"
+
+                    encodings = self.tokenizer(
+                        text, truncation=True, max_length=self.max_length,
+                        padding='max_length', return_tensors='pt'
+                    )
+                    return {
+                        'input_ids': encodings['input_ids'].squeeze(),
+                        'attention_mask': encodings['attention_mask'].squeeze(),
+                        'labels': encodings['input_ids'].squeeze()
+                    }
+
+            print("Creating training dataset...")
+            train_dataset = CommandDataset(training_examples, tokenizer)
+            print(f"Dataset ready with {len(train_dataset)} examples\n")
+
+            training_args = TrainingArguments(
+                output_dir='/tmp/training',
+                num_train_epochs=7,
+                per_device_train_batch_size=2,
+                learning_rate=5e-5,
+                logging_steps=10,
+                save_strategy="no",
+                report_to="none",
+                warmup_steps=10
+            )
+
+            print("Starting command system training (7 epochs)...")
+            trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset)
+            trainer.train()
+            print("\nTraining complete!\n")
+
+            # ===========================================
+            # TEST ALL FOUR COMMAND TYPES
+            # ===========================================
+            print("=" * 60)
+            print("TESTING COMMAND SYSTEM")
+            print("=" * 60)
+            print()
+
+            def generate_response(prompt, max_new_tokens=200):
+                inputs = tokenizer(prompt, return_tensors="pt", padding=True)
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        num_return_sequences=1,
+                        temperature=0.8,
+                        do_sample=True,
+                        repetition_penalty=1.5,
+                        pad_token_id=tokenizer.eos_token_id
+                    )
+                response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                return response.replace(prompt, "").strip()
+
+            # Test #Q (conversational)
+            print("=" * 60)
+            print("TEST 1: #Q Command (Conversational)")
+            print("=" * 60)
+            q_prompt = "#Q: What is a privileged container?\n"
+            q_response = generate_response(q_prompt)
+            print(f"Input: {q_prompt.strip()}")
+            print(f"Output: {q_response[:300]}...")
+            q_pass = any(kw in q_response.lower() for kw in ['privileged', 'root', 'host', 'container', 'permission'])
+            print(f"Result: {'PASS' if q_pass else 'FAIL'} - {'Contains security concepts' if q_pass else 'Missing concepts'}")
+            print()
+
+            # Test #T (structured)
+            print("=" * 60)
+            print("TEST 2: #T Command (Structured YAML)")
+            print("=" * 60)
+            t_prompt = "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true\n"
+            t_response = generate_response(t_prompt, max_new_tokens=250)
+            print(f"Input: {t_prompt.strip()}")
+            print(f"Output:\n{t_response[:400]}")
+            t_pass = any(kw in t_response.lower() for kw in ['finding', 'severity', 'critical', 'issue', 'evidence', 'confidence'])
+            print(f"Result: {'PASS' if t_pass else 'FAIL'} - {'Structured output detected' if t_pass else 'Missing structure'}")
+            print()
+
+            # Test #V (verify)
+            print("=" * 60)
+            print("TEST 3: #V Command (Verify True/False)")
+            print("=" * 60)
+            v_prompt = "#V: Is this pod safe for production?\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true\n"
+            v_response = generate_response(v_prompt, max_new_tokens=200)
+            print(f"Input: {v_prompt.strip()}")
+            print(f"Output:\n{v_response[:350]}")
+            v_pass = any(kw in v_response.lower() for kw in ['safe:', 'false', 'true', 'confidence', 'evidence', 'reason'])
+            print(f"Result: {'PASS' if v_pass else 'FAIL'} - {'Verification format detected' if v_pass else 'Missing format'}")
+            print()
+
+            # Test #S (scan)
+            print("=" * 60)
+            print("TEST 4: #S Command (Security Scan)")
+            print("=" * 60)
+            s_prompt = "#S: Scan this manifest:\napiVersion: v1\nkind: Pod\nspec:\n  hostNetwork: true\n  containers:\n  - name: debug\n    securityContext:\n      privileged: true\n"
+            s_response = generate_response(s_prompt, max_new_tokens=300)
+            print(f"Input: {s_prompt.strip()}")
+            print(f"Output:\n{s_response[:450]}")
+            s_pass = any(kw in s_response.lower() for kw in ['security_score', 'score', 'critical', 'findings', 'verdict', 'dangerous'])
+            print(f"Result: {'PASS' if s_pass else 'FAIL'} - {'Scan format detected' if s_pass else 'Missing format'}")
+            print()
+
+            # Summary
+            results = [q_pass, t_pass, v_pass, s_pass]
+            passed = sum(results)
+            score = (passed / 4) * 100
+
+            print("=" * 60)
+            print("COMMAND SYSTEM RESULTS")
+            print("=" * 60)
+            print(f"#Q (Question):   {'PASS' if q_pass else 'FAIL'}")
+            print(f"#T (Task):       {'PASS' if t_pass else 'FAIL'}")
+            print(f"#V (Verify):     {'PASS' if v_pass else 'FAIL'}")
+            print(f"#S (Scan):       {'PASS' if s_pass else 'FAIL'}")
+            print(f"\nOVERALL: {passed}/4 = {score:.0f}%")
+
+            if score >= 75:
+                print("COMMAND SYSTEM TRAINED SUCCESSFULLY!")
+                status = "passed"
+            else:
+                print("Needs more training or examples")
+                status = "needs_work"
+            print("=" * 60)
+            print()
+
+            # Save to persistent storage
+            save_path = "/storage/models/command-system"
+            print(f"Saving model to {save_path}...")
+            os.makedirs(save_path, exist_ok=True)
+            model.save_pretrained(save_path)
+            tokenizer.save_pretrained(save_path)
+
+            metadata = {
+                "level": "command-system",
+                "timestamp": datetime.now().isoformat(),
+                "score": score,
+                "passed": status == "passed",
+                "command_results": {
+                    "Q": q_pass,
+                    "T": t_pass,
+                    "V": v_pass,
+                    "S": s_pass
+                },
+                "training_examples": len(training_examples),
+                "epochs": 7
+            }
+            with open(f'{save_path}/metadata.json', 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            print("Model saved to persistent storage!")
+            print()
+            print("=" * 60)
+            print("Training node terminating - model persists in storage")
+            print("=" * 60)
+
+            PYTHON_EOF
+        volumeMounts:
+        - name: training-data
+          mountPath: /data
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "3Gi"
+            cpu: "1500m"
+          limits:
+            memory: "6Gi"
+            cpu: "2000m"
+      volumes:
+      - name: training-data
+        configMap:
+          name: command-training-data
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+      restartPolicy: Never
+  backoffLimit: 1

@@ -1,0 +1,122 @@
+[
+  {
+    "question": "#Q: What is the principle of least privilege?",
+    "answer": "The principle of least privilege means giving users and processes only the minimum permissions necessary to perform their tasks. In Kubernetes, this means pods should only have the capabilities they actually need - no root access unless required, no host network unless necessary, and restricted volume mounts. This limits the blast radius if a container is compromised."
+  },
+  {
+    "question": "#Q: What is a privileged container?",
+    "answer": "A privileged container runs with elevated permissions equivalent to root on the host. It has access to all devices, can modify kernel parameters, and bypass most security restrictions. In Kubernetes, you enable this with securityContext.privileged: true. It's dangerous because a compromised privileged container can escape to the host and take over the entire node."
+  },
+  {
+    "question": "#Q: What is SQL injection?",
+    "answer": "SQL injection is an attack where malicious SQL code is inserted into application queries through user input. For example, entering ' OR '1'='1 in a login form might bypass authentication. Attackers can read, modify, or delete database contents. Prevention includes parameterized queries, input validation, and least-privilege database accounts."
+  },
+  {
+    "question": "#Q: What is a DaemonSet in Kubernetes?",
+    "answer": "A DaemonSet ensures a copy of a pod runs on every node (or selected nodes) in a cluster. Common uses include log collectors, monitoring agents, and CNI network plugins. DaemonSets are security-sensitive because they often require elevated privileges to access host resources across all nodes."
+  },
+  {
+    "question": "#Q: What is container escape?",
+    "answer": "Container escape is when an attacker breaks out of a container's isolation to access the host system. Attack vectors include kernel exploits, misconfigured security contexts, mounted Docker sockets, and privileged containers. Once escaped, attackers can access other containers, steal secrets, or pivot to other nodes."
+  },
+  {
+    "question": "#Q: What is RBAC in Kubernetes?",
+    "answer": "Role-Based Access Control (RBAC) restricts what users and service accounts can do in Kubernetes. It uses Roles (namespace-scoped) and ClusterRoles (cluster-wide) to define permissions, then binds them to subjects via RoleBindings. Proper RBAC prevents unauthorized access to secrets, pods, and cluster configuration."
+  },
+  {
+    "question": "#Q: What is a service account?",
+    "answer": "A service account provides an identity for pods to authenticate with the Kubernetes API. Each pod gets a token mounted at /var/run/secrets/kubernetes.io/serviceaccount. If RBAC is misconfigured, a compromised pod can use its service account to enumerate secrets, create pods, or escalate privileges within the cluster."
+  },
+  {
+    "question": "#Q: What is hostPath in Kubernetes?",
+    "answer": "hostPath mounts a file or directory from the host node's filesystem into a pod. It's dangerous because pods can access sensitive host files like /etc/shadow, Docker socket, or kubelet credentials. Attackers use hostPath mounts to escape containers or steal node-level secrets."
+  },
+  {
+    "question": "#Q: What is network policy?",
+    "answer": "Network policies are Kubernetes resources that control pod-to-pod traffic. By default, all pods can communicate with each other. Network policies implement microsegmentation - you can restrict which pods can talk to your database, isolate namespaces, or block egress to the internet. They require a CNI that supports them."
+  },
+  {
+    "question": "#Q: What is a CVE?",
+    "answer": "CVE stands for Common Vulnerabilities and Exposures - a standardized identifier for security vulnerabilities. Each CVE has an ID (like CVE-2021-44228 for Log4Shell), severity score, and description. Security teams track CVEs to prioritize patching. In Kubernetes, CVEs affect the control plane, kubelet, container runtimes, and container images."
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true",
+    "answer": "findings:\n  - id: POD-001\n    severity: CRITICAL\n    issue: Privileged container enabled\n    line: 7\n    evidence: \"privileged: true\"\n    remediation: Remove privileged flag or use specific capabilities\n    risk: Container can escape to host and compromise node\nconfidence: 0.98"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  hostNetwork: true\n  hostPID: true\n  containers:\n  - name: debug",
+    "answer": "findings:\n  - id: POD-002\n    severity: CRITICAL\n    issue: Host network namespace shared\n    line: 4\n    evidence: \"hostNetwork: true\"\n    remediation: Remove hostNetwork unless required for CNI\n    risk: Pod can sniff all node traffic\n  - id: POD-003\n    severity: HIGH\n    issue: Host PID namespace shared\n    line: 5\n    evidence: \"hostPID: true\"\n    remediation: Remove hostPID\n    risk: Pod can see and signal host processes\nconfidence: 0.97"
+  },
+  {
+    "question": "#T: Analyze this deployment:\napiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n      - name: app\n        image: nginx:latest",
+    "answer": "findings:\n  - id: DEP-001\n    severity: MEDIUM\n    issue: Using latest tag\n    line: 8\n    evidence: \"image: nginx:latest\"\n    remediation: Pin to specific version like nginx:1.25.3\n    risk: Unpredictable deployments and potential supply chain attacks\nconfidence: 0.95"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    volumeMounts:\n    - name: docker\n      mountPath: /var/run/docker.sock\n  volumes:\n  - name: docker\n    hostPath:\n      path: /var/run/docker.sock",
+    "answer": "findings:\n  - id: POD-004\n    severity: CRITICAL\n    issue: Docker socket mounted\n    line: 12\n    evidence: \"path: /var/run/docker.sock\"\n    remediation: Remove Docker socket mount\n    risk: Full container escape - can create privileged containers on host\nconfidence: 0.99"
+  },
+  {
+    "question": "#T: Analyze this service account:\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: cluster-admin-sa\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: admin-binding\nsubjects:\n- kind: ServiceAccount\n  name: cluster-admin-sa\n  namespace: default\nroleRef:\n  kind: ClusterRole\n  name: cluster-admin\n  apiGroup: rbac.authorization.k8s.io",
+    "answer": "findings:\n  - id: RBAC-001\n    severity: CRITICAL\n    issue: Service account bound to cluster-admin\n    line: 16\n    evidence: \"name: cluster-admin\"\n    remediation: Use minimal custom Role with only required permissions\n    risk: Any pod using this SA has full cluster control\nconfidence: 0.99"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      runAsUser: 0\n      allowPrivilegeEscalation: true",
+    "answer": "findings:\n  - id: POD-005\n    severity: HIGH\n    issue: Running as root user\n    line: 7\n    evidence: \"runAsUser: 0\"\n    remediation: Set runAsUser to non-root UID (e.g., 1000)\n    risk: Root in container can exploit kernel vulnerabilities\n  - id: POD-006\n    severity: HIGH\n    issue: Privilege escalation allowed\n    line: 8\n    evidence: \"allowPrivilegeEscalation: true\"\n    remediation: Set allowPrivilegeEscalation: false\n    risk: Process can gain more privileges than parent\nconfidence: 0.96"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      capabilities:\n        add:\n        - SYS_ADMIN\n        - NET_ADMIN",
+    "answer": "findings:\n  - id: POD-007\n    severity: CRITICAL\n    issue: SYS_ADMIN capability added\n    line: 9\n    evidence: \"- SYS_ADMIN\"\n    remediation: Remove SYS_ADMIN - nearly equivalent to privileged\n    risk: Can mount filesystems, load kernel modules, escape container\n  - id: POD-008\n    severity: HIGH\n    issue: NET_ADMIN capability added\n    line: 10\n    evidence: \"- NET_ADMIN\"\n    remediation: Remove unless required for network configuration\n    risk: Can modify routing tables, firewall rules, sniff traffic\nconfidence: 0.97"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    env:\n    - name: DB_PASSWORD\n      value: \"supersecret123\"",
+    "answer": "findings:\n  - id: POD-009\n    severity: HIGH\n    issue: Hardcoded secret in environment variable\n    line: 8\n    evidence: \"value: supersecret123\"\n    remediation: Use Kubernetes Secret with secretKeyRef\n    risk: Password visible in pod spec, logs, and kubectl describe\nconfidence: 0.98"
+  },
+  {
+    "question": "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    resources: {}",
+    "answer": "findings:\n  - id: POD-010\n    severity: MEDIUM\n    issue: No resource limits defined\n    line: 6\n    evidence: \"resources: {}\"\n    remediation: Set memory and CPU limits\n    risk: Container can consume all node resources (DoS)\nconfidence: 0.94"
+  },
+  {
+    "question": "#T: Analyze this daemonset:\napiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: cni-plugin\nspec:\n  template:\n    spec:\n      hostNetwork: true\n      containers:\n      - name: cni\n        securityContext:\n          privileged: true\n        volumeMounts:\n        - name: cni-bin\n          mountPath: /opt/cni/bin\n      volumes:\n      - name: cni-bin\n        hostPath:\n          path: /opt/cni/bin",
+    "answer": "findings:\n  - id: DS-001\n    severity: CRITICAL\n    issue: Privileged DaemonSet on all nodes\n    line: 12\n    evidence: \"privileged: true\"\n    remediation: Verify this is legitimate CNI - CNI plugins require privileges\n    risk: Runs privileged on every node in cluster\n  - id: DS-002\n    severity: HIGH\n    issue: Host network access\n    line: 8\n    evidence: \"hostNetwork: true\"\n    remediation: Required for CNI - ensure image is trusted\n    risk: Can intercept all node network traffic\nnote: CNI plugins legitimately require these privileges\nconfidence: 0.95"
+  },
+  {
+    "question": "#V: Is this pod safe for production?\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true",
+    "answer": "safe: false\nconfidence: 0.99\nevidence:\n  - \"privileged: true enables container escape\"\n  - \"No legitimate reason visible for privileged mode\"\nreason: Privileged containers should never run in production without explicit justification. This pod can compromise the entire node."
+  },
+  {
+    "question": "#V: Is this pod safe for production?\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    image: nginx:1.25.3\n    securityContext:\n      runAsNonRoot: true\n      readOnlyRootFilesystem: true\n      allowPrivilegeEscalation: false",
+    "answer": "safe: true\nconfidence: 0.92\nevidence:\n  - \"runAsNonRoot: true prevents root execution\"\n  - \"readOnlyRootFilesystem: true prevents file tampering\"\n  - \"allowPrivilegeEscalation: false blocks privilege gain\"\n  - \"Pinned image version (nginx:1.25.3)\"\nreason: Pod follows security best practices with multiple hardening measures."
+  },
+  {
+    "question": "#V: Is this RBAC binding safe?\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nsubjects:\n- kind: ServiceAccount\n  name: monitoring\n  namespace: monitoring\nroleRef:\n  kind: ClusterRole\n  name: view",
+    "answer": "safe: true\nconfidence: 0.88\nevidence:\n  - \"ClusterRole 'view' is read-only\"\n  - \"Scoped to specific service account\"\n  - \"Monitoring namespace is appropriate for this role\"\nreason: View role grants read-only access to non-sensitive resources. Appropriate for monitoring workloads."
+  },
+  {
+    "question": "#V: Is this deployment safe?\napiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n      - name: app\n        image: app:latest\n        ports:\n        - containerPort: 8080",
+    "answer": "safe: false\nconfidence: 0.85\nevidence:\n  - \"Using 'latest' tag - unpredictable versions\"\n  - \"No securityContext defined\"\n  - \"No resource limits\"\n  - \"Likely runs as root by default\"\nreason: Missing basic security hardening. Not production-ready without security context and pinned image."
+  },
+  {
+    "question": "#V: Is mounting /etc/passwd into a pod safe?\nvolumeMounts:\n- name: passwd\n  mountPath: /etc/passwd\n  readOnly: true\nvolumes:\n- name: passwd\n  hostPath:\n    path: /etc/passwd",
+    "answer": "safe: false\nconfidence: 0.97\nevidence:\n  - \"Exposes host user database to container\"\n  - \"Attackers can enumerate system users\"\n  - \"readOnly doesn't prevent information disclosure\"\nreason: Host file mounts expose sensitive system information. Use ConfigMaps or Secrets instead."
+  },
+  {
+    "question": "#S: Scan this manifest:\napiVersion: v1\nkind: Pod\nspec:\n  hostNetwork: true\n  hostPID: true\n  containers:\n  - name: debug\n    securityContext:\n      privileged: true\n    volumeMounts:\n    - name: root\n      mountPath: /host\n  volumes:\n  - name: root\n    hostPath:\n      path: /",
+    "answer": "security_score: 1/10\ncritical_issues: 4\nhigh_issues: 0\nfindings:\n  - type: privilege_escalation\n    severity: critical\n    detail: \"privileged: true grants full host access\"\n  - type: host_namespace\n    severity: critical\n    detail: \"hostNetwork exposes all node traffic\"\n  - type: host_namespace\n    severity: critical\n    detail: \"hostPID exposes host processes\"\n  - type: filesystem_escape\n    severity: critical\n    detail: \"Host root (/) mounted at /host\"\nverdict: EXTREMELY DANGEROUS - This is a full node compromise pod"
+  },
+  {
+    "question": "#S: Scan this manifest:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    image: myapp:v1.2.3\n    securityContext:\n      runAsNonRoot: true\n      readOnlyRootFilesystem: true\n      allowPrivilegeEscalation: false\n      capabilities:\n        drop:\n        - ALL\n    resources:\n      limits:\n        memory: 512Mi\n        cpu: 500m",
+    "answer": "security_score: 9/10\ncritical_issues: 0\nhigh_issues: 0\nfindings:\n  - type: good_practice\n    severity: info\n    detail: \"runAsNonRoot enforced\"\n  - type: good_practice\n    severity: info\n    detail: \"All capabilities dropped\"\n  - type: good_practice\n    severity: info\n    detail: \"Read-only filesystem\"\n  - type: good_practice\n    severity: info\n    detail: \"Resource limits defined\"\nverdict: WELL HARDENED - Follows security best practices"
+  },
+  {
+    "question": "#S: Scan this manifest:\napiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      serviceAccountName: default\n      containers:\n      - name: app\n        image: app:latest\n        env:\n        - name: API_KEY\n          value: \"sk-12345abcdef\"",
+    "answer": "security_score: 4/10\ncritical_issues: 1\nhigh_issues: 2\nfindings:\n  - type: secret_exposure\n    severity: critical\n    detail: \"API key hardcoded in env var\"\n  - type: image_hygiene\n    severity: high\n    detail: \"Using 'latest' tag\"\n  - type: service_account\n    severity: high\n    detail: \"Using default service account\"\nverdict: NOT PRODUCTION READY - Fix secret handling before deploying"
+  },
+  {
+    "question": "#S: Scan this network policy:\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: deny-all\nspec:\n  podSelector: {}\n  policyTypes:\n  - Ingress\n  - Egress",
+    "answer": "security_score: 10/10\ncritical_issues: 0\nhigh_issues: 0\nfindings:\n  - type: good_practice\n    severity: info\n    detail: \"Default deny all traffic\"\n  - type: good_practice\n    severity: info\n    detail: \"Applies to all pods in namespace\"\n  - type: good_practice\n    severity: info\n    detail: \"Blocks both ingress and egress\"\nverdict: EXCELLENT - Zero-trust network baseline. Add allow rules for required traffic."
+  },
+  {
+    "question": "#S: Scan this manifest:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    image: app:1.0\n    securityContext:\n      capabilities:\n        add:\n        - SYS_PTRACE\n        - SYS_ADMIN",
+    "answer": "security_score: 2/10\ncritical_issues: 2\nhigh_issues: 0\nfindings:\n  - type: dangerous_capability\n    severity: critical\n    detail: \"SYS_ADMIN nearly equivalent to privileged mode\"\n  - type: dangerous_capability\n    severity: critical\n    detail: \"SYS_PTRACE allows debugging/tracing other processes\"\nverdict: DANGEROUS - These capabilities enable container escape. Remove unless debugging."
+  }
+]

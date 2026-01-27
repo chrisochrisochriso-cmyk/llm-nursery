@@ -1,0 +1,140 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-commands
+  namespace: llm-nursery
+spec:
+  template:
+    spec:
+      containers:
+      - name: inference
+        image: llm-trainer:v2
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "============================================================"
+            echo "COMMAND SYSTEM INFERENCE TEST"
+            echo "============================================================"
+            echo "Loading trained model from storage..."
+            echo ""
+
+            python << 'PYTHON_EOF'
+            import torch
+            import os
+            import json
+
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+
+            model_path = "/storage/models/command-system"
+            if not os.path.exists(model_path):
+                print(f"ERROR: Model not found at {model_path}")
+                print("Run train-command-system.yaml first!")
+                exit(1)
+
+            print(f"Loading model from {model_path}...")
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            model = AutoModelForCausalLM.from_pretrained(model_path)
+            tokenizer.pad_token = tokenizer.eos_token
+            print("Model loaded!\n")
+
+            with open(f'{model_path}/metadata.json', 'r') as f:
+                metadata = json.load(f)
+            print(f"Model Info:")
+            print(f"  Level: {metadata['level']}")
+            print(f"  Trained: {metadata['timestamp']}")
+            print(f"  Score: {metadata['score']}%")
+            print()
+
+            def generate(prompt, max_tokens=250):
+                inputs = tokenizer(prompt, return_tensors="pt", padding=True)
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        num_return_sequences=1,
+                        temperature=0.8,
+                        do_sample=True,
+                        pad_token_id=tokenizer.eos_token_id,
+                        repetition_penalty=1.5
+                    )
+                response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                return response.replace(prompt, "").strip()
+
+            print("=" * 70)
+            print("COMMAND SYSTEM DEMONSTRATION")
+            print("=" * 70)
+            print()
+
+            # Demo 1: #Q Question
+            print("-" * 70)
+            print("#Q DEMO: Conversational Question")
+            print("-" * 70)
+            q_input = "#Q: What is container escape and why is it dangerous?"
+            print(f"Input: {q_input}")
+            print()
+            q_output = generate(q_input + "\n", max_tokens=200)
+            print(f"Response:\n{q_output}")
+            print()
+
+            # Demo 2: #T Task
+            print("-" * 70)
+            print("#T DEMO: Structured Analysis")
+            print("-" * 70)
+            t_input = "#T: Analyze this pod spec:\napiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    securityContext:\n      privileged: true"
+            print(f"Input: {t_input}")
+            print()
+            t_output = generate(t_input + "\n", max_tokens=300)
+            print(f"Response:\n{t_output}")
+            print()
+
+            # Demo 3: #V Verify
+            print("-" * 70)
+            print("#V DEMO: Verification")
+            print("-" * 70)
+            v_input = "#V: Is this service account safe?\napiVersion: v1\nkind: ServiceAccount\nautomountServiceAccountToken: false"
+            print(f"Input: {v_input}")
+            print()
+            v_output = generate(v_input + "\n", max_tokens=200)
+            print(f"Response:\n{v_output}")
+            print()
+
+            # Demo 4: #S Scan
+            print("-" * 70)
+            print("#S DEMO: Security Scan")
+            print("-" * 70)
+            s_input = "#S: Scan this manifest:\napiVersion: v1\nkind: Pod\nspec:\n  hostNetwork: true\n  containers:\n  - name: app\n    securityContext:\n      privileged: true"
+            print(f"Input: {s_input}")
+            print()
+            s_output = generate(s_input + "\n", max_tokens=350)
+            print(f"Response:\n{s_output}")
+            print()
+
+            print("=" * 70)
+            print("DEMONSTRATION COMPLETE")
+            print("=" * 70)
+            print()
+            print("Command System Ready:")
+            print("  #Q: <question>     - Conversational answers")
+            print("  #T: <yaml>         - Structured analysis")
+            print("  #V: <yaml>         - True/false verification")
+            print("  #S: <yaml>         - Security scan report")
+            print()
+
+            PYTHON_EOF
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+      restartPolicy: Never
+  backoffLimit: 1

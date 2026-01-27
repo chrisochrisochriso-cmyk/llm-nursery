@@ -1,0 +1,19 @@
+FROM python:3.9-slim
+
+RUN python -m pip install --upgrade pip
+
+RUN python -m pip install --no-cache-dir \
+    transformers \
+    torch \
+    accelerate \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Ensure unbuffered output for real-time logs
+ENV PYTHONUNBUFFERED=1
+
+# Pre-cache the model
+RUN python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
+    AutoTokenizer.from_pretrained('distilgpt2'); \
+    AutoModelForCausalLM.from_pretrained('distilgpt2')"
+
+WORKDIR /workspace

@@ -1,0 +1,82 @@
+[
+  {
+    "question": "What is the principle of least privilege?",
+    "answer": "The principle of least privilege means giving users only the minimum access and permissions necessary to perform their job functions. This reduces the potential damage from accidents, errors, or unauthorized access."
+  },
+  {
+    "question": "What is SQL injection?",
+    "answer": "SQL injection is a code injection attack where malicious SQL statements are inserted into application queries. Attackers exploit vulnerabilities to access, modify, or delete database data without authorization."
+  },
+  {
+    "question": "What is encryption?",
+    "answer": "Encryption is the process of converting plaintext data into ciphertext using cryptographic algorithms. It protects sensitive information by making it unreadable without the correct decryption key."
+  },
+  {
+    "question": "Why are security patches important?",
+    "answer": "Security patches fix known vulnerabilities in software that attackers could exploit. Applying patches promptly prevents unauthorized access, data breaches, and system compromises."
+  },
+  {
+    "question": "What is multi-factor authentication?",
+    "answer": "Multi-factor authentication requires users to provide two or more verification factors to access a system. This adds security beyond passwords by requiring something you know, have, or are."
+  },
+  {
+    "question": "What is a firewall?",
+    "answer": "A firewall is a network security device that monitors and filters traffic based on security rules. It acts as a barrier between trusted internal networks and untrusted external networks."
+  },
+  {
+    "question": "What is zero trust security?",
+    "answer": "Zero trust security is a model that assumes no user or system should be trusted by default. Every access request must be verified regardless of whether it originates inside or outside the network perimeter."
+  },
+  {
+    "question": "What is a DDoS attack?",
+    "answer": "A Distributed Denial of Service attack floods a target system with traffic from multiple sources. This overwhelms the system's resources and makes legitimate services unavailable to users."
+  },
+  {
+    "question": "What is phishing?",
+    "answer": "Phishing is a social engineering attack where attackers impersonate trusted entities to steal sensitive information like passwords or credit card numbers through deceptive emails or websites."
+  },
+  {
+    "question": "What is ransomware?",
+    "answer": "Ransomware is malicious software that encrypts victim files and demands payment for the decryption key. It can cripple organizations by making critical data inaccessible."
+  },
+  {
+    "question": "What is access control?",
+    "answer": "Access control is the selective restriction of access to resources based on user identity and permissions. It ensures only authorized users can view or modify sensitive data."
+  },
+  {
+    "question": "What is a vulnerability?",
+    "answer": "A vulnerability is a weakness in a system that could be exploited by attackers to gain unauthorized access or cause harm. Vulnerabilities can exist in software, hardware, or processes."
+  },
+  {
+    "question": "What is penetration testing?",
+    "answer": "Penetration testing is the practice of simulating cyberattacks to identify security weaknesses. Ethical hackers test systems to find vulnerabilities before malicious actors can exploit them."
+  },
+  {
+    "question": "What is a security incident?",
+    "answer": "A security incident is an event that compromises the confidentiality, integrity, or availability of information assets. It requires investigation and response to minimize damage."
+  },
+  {
+    "question": "What is network segmentation?",
+    "answer": "Network segmentation divides a network into smaller isolated segments to contain breaches and limit lateral movement. It reduces the attack surface and improves security monitoring."
+  },
+  {
+    "question": "What is authentication?",
+    "answer": "Authentication is the process of verifying the identity of a user or system. Common methods include passwords, biometrics, and security tokens to ensure users are who they claim to be."
+  },
+  {
+    "question": "What is authorization?",
+    "answer": "Authorization determines what actions an authenticated user is permitted to perform. It defines access rights and privileges based on roles and policies."
+  },
+  {
+    "question": "What is a security audit?",
+    "answer": "A security audit is a systematic evaluation of an organization's security posture. It assesses controls, identifies weaknesses, and ensures compliance with security standards."
+  },
+  {
+    "question": "What is malware?",
+    "answer": "Malware is malicious software designed to damage, disrupt, or gain unauthorized access to systems. Types include viruses, trojans, worms, and spyware."
+  },
+  {
+    "question": "What is a brute force attack?",
+    "answer": "A brute force attack attempts to guess passwords or encryption keys by trying all possible combinations. Strong passwords and account lockouts help defend against these attacks."
+  }
+]

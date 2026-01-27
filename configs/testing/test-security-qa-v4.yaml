@@ -1,0 +1,118 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: security-test-v4
+  namespace: llm-nursery
+spec:
+  template:
+    spec:
+      containers:
+      - name: security-trainer
+        image: python:3.9-slim
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "===== Installing Dependencies ====="
+            python -m pip install --no-cache-dir transformers torch --extra-index-url https://download.pytorch.org/whl/cpu
+            
+            echo "===== Verifying Installation ====="
+            python -c "import torch; import transformers; print('✅ All packages ready')"
+            
+            echo "===== Starting Security Test ====="
+            
+            python << 'PYTHON_EOF'
+            import torch
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            
+            print("="*60)
+            print("🚀 LOADING AI MODEL")
+            print("="*60)
+            
+            model_name = "distilgpt2"
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = AutoModelForCausalLM.from_pretrained(model_name)
+            tokenizer.pad_token = tokenizer.eos_token
+            
+            print("✅ Model loaded successfully\n")
+            
+            questions = [
+                "Q1: What is the principle of least privilege?",
+                "Q2: What is SQL injection?",
+                "Q3: What is encryption?",
+                "Q4: Why are security patches important?"
+            ]
+            
+            security_keywords = [
+                ['access', 'minimum', 'necessary', 'permissions', 'privilege'],
+                ['sql', 'injection', 'query', 'database', 'vulnerability'],
+                ['encrypt', 'cipher', 'secure', 'protect', 'data'],
+                ['patch', 'update', 'vulnerability', 'fix', 'security']
+            ]
+            
+            print("="*60)
+            print("📝 SECURITY COMPETENCY TEST - BASIC LEVEL")
+            print("="*60)
+            print()
+            
+            correct = 0
+            for i, question in enumerate(questions):
+                print(f"\n{'='*60}")
+                print(f"QUESTION {i+1}:")
+                print(f"{'='*60}")
+                print(question)
+                print()
+                
+                inputs = tokenizer(question, return_tensors="pt", padding=True)
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_length=100,
+                        num_return_sequences=1,
+                        temperature=0.7,
+                        do_sample=True,
+                        pad_token_id=tokenizer.eos_token_id
+                    )
+                
+                answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                
+                print("AI ANSWER:")
+                print("-"*60)
+                print(answer)
+                print("-"*60)
+                print()
+                
+                answer_lower = answer.lower()
+                found_keywords = [kw for kw in security_keywords[i] if kw in answer_lower]
+                
+                if found_keywords:
+                    print(f"✅ PASS - Found: {', '.join(found_keywords)}")
+                    correct += 1
+                else:
+                    print(f"❌ FAIL - Missing keywords: {', '.join(security_keywords[i])}")
+            
+            print()
+            print("="*60)
+            print("FINAL RESULTS")
+            print("="*60)
+            score = (correct / len(questions)) * 100
+            print(f"Score: {correct}/{len(questions)} = {score:.1f}%")
+            print(f"Pass Threshold: 60%")
+            print()
+            
+            if score >= 60:
+                print("🎉 PASSED: Ready for Apprentice Level")
+            else:
+                print("📚 NEEDS TRAINING: Requires more security knowledge")
+            
+            print("="*60)
+            
+            PYTHON_EOF
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      restartPolicy: Never
+  backoffLimit: 1
