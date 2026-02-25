@@ -1,0 +1,109 @@
+# paperknight AI - Coordinator
+# FastAPI service - the brain of the system
+#
+# What it does:
+#   1. Receives requests from the pk CLI (port 8000, internal LAN only)
+#   2. Queries ChromaDB RAG BEFORE every inference request
+#   3. Injects relevant context into the system prompt
+#   4. Routes to Ollama node1 (primary) or node2 (failover)
+#   5. Selects system prompt based on user profile (chriso vs johno)
+#   6. Streams response back to CLI
+#
+# No secrets required - no external API calls, no Telegram, no cloud.
+# All traffic stays on your home network.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pk-coordinator
+  namespace: paperknight-ai
+  labels:
+    app: pk-coordinator
+    component: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pk-coordinator
+  template:
+    metadata:
+      labels:
+        app: pk-coordinator
+        component: inference
+    spec:
+      containers:
+      - name: coordinator
+        image: pk-coordinator:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        # Primary Ollama node (ZimaBoard 1)
+        - name: OLLAMA_NODE1_URL
+          value: "http://ollama-node1-service:11434"
+        # Secondary Ollama node (ZimaBoard 2) - failover
+        - name: OLLAMA_NODE2_URL
+          value: "http://ollama-node2-service:11434"
+        # Model to use
+        - name: MODEL_NAME
+          value: "lfm2:24b"
+        # ChromaDB for RAG context injection
+        - name: CHROMADB_URL
+          value: "http://chromadb-service:8000"
+        # RAG: number of documents to retrieve per query
+        - name: RAG_TOP_K
+          value: "5"
+        # History storage path (on PVC)
+        - name: HISTORY_PATH
+          value: "/storage/history"
+        ports:
+        - containerPort: 8000
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            # 512Mi hard cap per memory budget
+            memory: "512Mi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: pk-model-storage
+---
+# Internal service - only accessible on home LAN via NodePort or kubectl port-forward
+# NOT exposed to internet - home network only
+apiVersion: v1
+kind: Service
+metadata:
+  name: pk-coordinator-service
+  namespace: paperknight-ai
+  labels:
+    app: pk-coordinator
+    component: inference
+spec:
+  selector:
+    app: pk-coordinator
+  ports:
+  - name: api
+    port: 8000
+    targetPort: 8000
+    # NodePort lets the pk CLI reach the coordinator from chriso/johno laptops
+    nodePort: 30800
+  type: NodePort

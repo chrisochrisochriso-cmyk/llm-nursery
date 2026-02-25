@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+# paperknight AI - Coordinator image
+# Builds: docker build -t pk-coordinator:v1 -f Dockerfile.pk .
+
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# System deps for sentence-transformers tokenizers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pk_requirements.txt .
+RUN pip install --no-cache-dir -r pk_requirements.txt
+
+# Pre-download the embedding model at build time so first startup is fast
+# Model: all-MiniLM-L6-v2, ~90MB, used for RAG document embedding
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+print('Embedding model cached')"
+
+COPY pk_main.py .
+
+EXPOSE 8000
+
+# 2 workers - ZimaBoard has 4 cores, coordinator is mostly I/O-bound
+CMD ["uvicorn", "pk_main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--log-level", "info"]

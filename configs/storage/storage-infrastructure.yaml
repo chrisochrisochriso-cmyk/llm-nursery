@@ -10,7 +10,7 @@ spec:
   resources:
     requests:
       storage: 5Gi
-  storageClassName: standard
+  storageClassName: hostpath
 ---
 apiVersion: apps/v1
 kind: Deployment

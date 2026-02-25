@@ -1,0 +1,133 @@
+# paperknight AI - DaemonSet Pipeline Agent
+# Runs on EVERY k3s node (both ZimaBoards)
+#
+# What it does:
+#   - Polls Ollama on its local node every 10s
+#   - Exposes /health and /topology endpoints
+#   - Coordinator queries /topology to decide which node to route to
+#   - Acts as the inter-node routing bus and health monitor
+#
+# One pod per node (that's how DaemonSets work - correct behavior)
+# Memory: 256Mi per node per memory budget
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pk-pipeline-agent
+  namespace: paperknight-ai
+  labels:
+    app: pk-pipeline-agent
+    component: pipeline
+spec:
+  selector:
+    matchLabels:
+      app: pk-pipeline-agent
+  template:
+    metadata:
+      labels:
+        app: pk-pipeline-agent
+        component: pipeline
+    spec:
+      containers:
+      - name: agent
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+          - |
+            pip install --quiet fastapi uvicorn httpx 2>&1 | tail -1
+            python << 'AGENT_EOF'
+            import asyncio, os, socket, logging
+            import httpx
+            from fastapi import FastAPI
+            import uvicorn
+
+            logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+            logger = logging.getLogger(__name__)
+
+            # Each agent knows about both Ollama nodes
+            NODE1_URL = os.environ.get("OLLAMA_NODE1_URL", "http://ollama-node1-service:11434")
+            NODE2_URL = os.environ.get("OLLAMA_NODE2_URL", "http://ollama-node2-service:11434")
+            MY_NODE = socket.gethostname()
+
+            node_status = {
+                "node1": {"url": NODE1_URL, "status": "unknown", "model": "unknown"},
+                "node2": {"url": NODE2_URL, "status": "unknown", "model": "unknown"},
+            }
+
+            app = FastAPI(title="pk-pipeline-agent")
+
+            async def poll_node_health():
+                while True:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        for name, info in node_status.items():
+                            try:
+                                r = await client.get(f"{info['url']}/api/tags")
+                                if r.status_code == 200:
+                                    tags = r.json().get("models", [])
+                                    has_lfm2 = any("lfm2" in m.get("name","") for m in tags)
+                                    info["status"] = "ready" if has_lfm2 else "no-model"
+                                    info["model"] = "lfm2:24b" if has_lfm2 else "none"
+                                else:
+                                    info["status"] = "degraded"
+                            except Exception as e:
+                                info["status"] = "offline"
+                                info["model"] = "unknown"
+                    await asyncio.sleep(10)
+
+            @app.on_event("startup")
+            async def startup():
+                asyncio.create_task(poll_node_health())
+                logger.info(f"pk-pipeline-agent started on {MY_NODE}")
+
+            @app.get("/health")
+            def health():
+                return {"status": "ok", "node": MY_NODE, "nodes": node_status}
+
+            @app.get("/topology")
+            def topology():
+                ready_nodes = [n for n, s in node_status.items() if s["status"] == "ready"]
+                return {
+                    "node": MY_NODE,
+                    "nodes": node_status,
+                    "ready_nodes": ready_nodes,
+                    "all_ready": len(ready_nodes) == 2,
+                    "any_ready": len(ready_nodes) > 0,
+                }
+
+            if __name__ == "__main__":
+                uvicorn.run(app, host="0.0.0.0", port=9090, log_level="warning")
+            AGENT_EOF
+        env:
+        - name: OLLAMA_NODE1_URL
+          value: "http://ollama-node1-service:11434"
+        - name: OLLAMA_NODE2_URL
+          value: "http://ollama-node2-service:11434"
+        ports:
+        - containerPort: 9090
+          name: agent
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            # 256Mi per node per memory budget
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pk-pipeline-agent-service
+  namespace: paperknight-ai
+  labels:
+    app: pk-pipeline-agent
+    component: pipeline
+spec:
+  selector:
+    app: pk-pipeline-agent
+  ports:
+  - name: agent
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP

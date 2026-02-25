@@ -1,0 +1,74 @@
+# RAG ingestion job for paperknight knowledge base.
+#
+# Prerequisites (run before applying this file):
+#   kubectl create configmap rag-ingest-script \
+#     --from-file=ingest.py=src/rag/ingest.py \
+#     -n llm-nursery --dry-run=client -o yaml | kubectl apply -f -
+#
+# The job: pip-installs httpx then runs ingest.py against ChromaDB and Ollama.
+# Expected runtime: 3-7 minutes (dominated by embedding generation).
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rag-ingest
+  namespace: llm-nursery
+  labels:
+    app: rag-ingest
+    component: rag
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: rag-ingest
+        component: rag
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: wait-chromadb
+        image: busybox
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for ChromaDB..."
+            until wget -qO- http://chromadb-service:8000/api/v1/heartbeat; do
+              echo "  not ready, retrying in 3s..."
+              sleep 3
+            done
+            echo "ChromaDB is up."
+      containers:
+      - name: ingest
+        image: python:3.11-slim
+        command:
+          - sh
+          - -c
+          - |
+            pip install --quiet --no-cache-dir httpx && python /scripts/ingest.py
+        env:
+        - name: CHROMADB_URL
+          value: "http://chromadb-service:8000"
+        - name: OLLAMA_URL
+          value: "http://ollama-service:11434"
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: scripts
+        configMap:
+          name: rag-ingest-script
+          defaultMode: 0755
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage

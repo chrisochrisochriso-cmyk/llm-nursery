@@ -1,0 +1,142 @@
+# paperknight AI - Ollama Node 2
+# Runs on ZimaBoard 2 (secondary inference node, Plex host)
+# Handles model layers 20-39 via Ollama pipeline parallelism
+#
+# Hardware: Intel Celeron N3450, 8GB LPDDR4 - CPU only, no GPU
+# Memory budget: 7GB hard limit (leaves 1GB for OS + Plex headroom)
+#
+# IMPORTANT: Plex runs on this board. DO NOT exceed 7GB memory limit.
+# This namespace (paperknight-ai) is isolated from Plex - they coexist safely.
+#
+# Node affinity: pin to the physical ZimaBoard 2 node
+#   Label your k3s node: kubectl label node <zimaboard2-hostname> pk-node=node2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-node2
+  namespace: paperknight-ai
+  labels:
+    app: ollama-node2
+    component: inference
+    pk-role: secondary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-node2
+  template:
+    metadata:
+      labels:
+        app: ollama-node2
+        component: inference
+        pk-role: secondary
+    spec:
+      # Pin to ZimaBoard 2 (Plex host) - label the node first (see above)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: pk-node
+                operator: In
+                values:
+                - node2
+      initContainers:
+      # Model is shared via PVC - node2 uses the same cached weights as node1
+      # ReadWriteMany PVC (nfs or local-path with shared mount) required
+      - name: verify-model
+        image: busybox
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "paperknight AI - Node 2 init"
+            # Check model weights exist on shared storage
+            if [ -d "/storage/ollama" ]; then
+              echo "Model storage found - node 2 ready"
+            else
+              echo "WARNING: /storage/ollama not found - node1 must pull model first"
+              echo "Run: kubectl rollout restart deployment/ollama-node1 -n paperknight-ai"
+              exit 1
+            fi
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        command: ["ollama", "serve"]
+        env:
+        - name: OLLAMA_MODELS
+          value: /storage/ollama
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_NUM_PARALLEL
+          value: "1"
+        - name: OLLAMA_MAX_LOADED_MODELS
+          value: "1"
+        - name: OLLAMA_KEEP_ALIVE
+          value: "1h"
+        # CPU-only
+        - name: OLLAMA_NUM_GPU
+          value: "0"
+        - name: OLLAMA_NUM_CTX
+          value: "2048"
+        ports:
+        - containerPort: 11434
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1000m"
+          limits:
+            # 7GB hard cap - MUST NOT exceed, Plex is on this board
+            memory: "7Gi"
+            cpu: "4000m"
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          failureThreshold: 3
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: pk-model-storage
+---
+# Internal service - coordinator uses node2 as overflow / failover
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-node2-service
+  namespace: paperknight-ai
+  labels:
+    app: ollama-node2
+    component: inference
+spec:
+  selector:
+    app: ollama-node2
+  ports:
+  - name: api
+    port: 11434
+    targetPort: 11434
+  type: ClusterIP

@@ -1,0 +1,500 @@
+# Pipeline DaemonSet + 4 Shard Deployments
+#
+# Architecture:
+#   pipeline-agent (DaemonSet)  - runs on every K8s node, acts as the
+#                                  inter-node routing bus and health monitor
+#
+#   pipeline-shard-{0..3}       - sequential layer-range handlers:
+#     shard-0: embed_tokens + transformer layers 0..6  (text -> hidden states)
+#     shard-1: transformer layers 7..13               (hidden state passthrough)
+#     shard-2: transformer layers 14..20              (hidden state passthrough)
+#     shard-3: transformer layers 21..27 + norm + lm_head  (hidden states -> token)
+#
+# Single-node note (Docker Desktop / Minikube):
+#   All 4 shard Deployments schedule onto the same node. The DaemonSet
+#   produces 1 pod (one per node). This is correct behavior - the architecture
+#   is ready for multi-node expansion (minikube start --nodes 4).
+#
+# Memory note: shards start at replicas:0 to protect the 8GB RAM budget.
+#   Scale up individually when switching to pipeline inference mode:
+#     kubectl scale deployment pipeline-shard-{0,1,2,3} --replicas=1 -n llm-nursery
+#
+# Model weights must be on the PVC before shards start:
+#   kubectl exec -n llm-nursery deployment/storage-node -- \
+#     ls /storage/models/qwen2.5-coder
+#   (The shard init container downloads if missing - requires internet for first run)
+---
+# DaemonSet: pipeline-agent
+# Runs on every K8s node. Maintains routing table of live shard endpoints,
+# reports shard health to the coordinator, proxies routing decisions locally.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pipeline-agent
+  namespace: llm-nursery
+  labels:
+    app: pipeline-agent
+    component: pipeline
+spec:
+  selector:
+    matchLabels:
+      app: pipeline-agent
+  template:
+    metadata:
+      labels:
+        app: pipeline-agent
+        component: pipeline
+    spec:
+      containers:
+      - name: agent
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+          - |
+            pip install --quiet fastapi uvicorn httpx 2>&1 | tail -1
+            python << 'AGENT_EOF'
+            import asyncio, os, logging
+            import httpx
+            from fastapi import FastAPI
+            import uvicorn
+
+            logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+            logger = logging.getLogger(__name__)
+
+            SHARD_URLS = {
+                0: os.environ.get("SHARD_0_URL", "http://pipeline-shard-0-service:8080"),
+                1: os.environ.get("SHARD_1_URL", "http://pipeline-shard-1-service:8080"),
+                2: os.environ.get("SHARD_2_URL", "http://pipeline-shard-2-service:8080"),
+                3: os.environ.get("SHARD_3_URL", "http://pipeline-shard-3-service:8080"),
+            }
+
+            shard_status = {i: "unknown" for i in range(4)}
+
+            app = FastAPI(title="pipeline-agent")
+
+            async def poll_shard_health():
+                while True:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        for shard_id, url in SHARD_URLS.items():
+                            try:
+                                r = await client.get(f"{url}/health")
+                                shard_status[shard_id] = "ready" if r.status_code == 200 else "degraded"
+                            except Exception:
+                                shard_status[shard_id] = "offline"
+                    await asyncio.sleep(10)
+
+            @app.on_event("startup")
+            async def startup():
+                asyncio.create_task(poll_shard_health())
+                logger.info("pipeline-agent started on node")
+
+            @app.get("/health")
+            def health():
+                return {"status": "ok", "shards": shard_status}
+
+            @app.get("/topology")
+            def topology():
+                return {
+                    "shard_urls": SHARD_URLS,
+                    "shard_status": shard_status,
+                    "all_ready": all(v == "ready" for v in shard_status.values()),
+                }
+
+            if __name__ == "__main__":
+                uvicorn.run(app, host="0.0.0.0", port=9090, log_level="warning")
+            AGENT_EOF
+        env:
+        - name: SHARD_0_URL
+          value: "http://pipeline-shard-0-service:8080"
+        - name: SHARD_1_URL
+          value: "http://pipeline-shard-1-service:8080"
+        - name: SHARD_2_URL
+          value: "http://pipeline-shard-2-service:8080"
+        - name: SHARD_3_URL
+          value: "http://pipeline-shard-3-service:8080"
+        ports:
+        - containerPort: 9090
+          name: agent
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-agent-service
+  namespace: llm-nursery
+  labels:
+    app: pipeline-agent
+    component: pipeline
+spec:
+  selector:
+    app: pipeline-agent
+  ports:
+  - name: agent
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+---
+# Shard 0: embed_tokens + layers 0..6
+# Accepts raw text via /embed, returns hidden states
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-shard-0
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-0
+    component: pipeline
+    shard: "0"
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: pipeline-shard-0
+  template:
+    metadata:
+      labels:
+        app: pipeline-shard-0
+        component: pipeline
+        shard: "0"
+    spec:
+      initContainers:
+      - name: download-model
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+          - |
+            if [ -d "/storage/models/qwen2.5-coder" ]; then
+              echo "Model already on PVC, skipping download"
+              exit 0
+            fi
+            echo "Installing huggingface_hub..."
+            pip install --quiet huggingface_hub
+            echo "Downloading Qwen2.5-Coder-1.5B-Instruct to PVC..."
+            python -c "
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id='Qwen/Qwen2.5-Coder-1.5B-Instruct',
+                local_dir='/storage/models/qwen2.5-coder',
+                ignore_patterns=['*.msgpack', '*.h5', 'flax_model*', 'tf_model*'],
+            )
+            print('Download complete')
+            "
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+      containers:
+      - name: shard
+        image: pipeline-shard:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: SHARD_ID
+          value: "0"
+        - name: MODEL_PATH
+          value: "/storage/models/qwen2.5-coder"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - containerPort: 8080
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1500Mi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-shard-0-service
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-0
+    component: pipeline
+spec:
+  selector:
+    app: pipeline-shard-0
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# Shard 1: layers 7..13
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-shard-1
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-1
+    component: pipeline
+    shard: "1"
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: pipeline-shard-1
+  template:
+    metadata:
+      labels:
+        app: pipeline-shard-1
+        component: pipeline
+        shard: "1"
+    spec:
+      containers:
+      - name: shard
+        image: pipeline-shard:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: SHARD_ID
+          value: "1"
+        - name: MODEL_PATH
+          value: "/storage/models/qwen2.5-coder"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - containerPort: 8080
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1500Mi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-shard-1-service
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-1
+    component: pipeline
+spec:
+  selector:
+    app: pipeline-shard-1
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# Shard 2: layers 14..20
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-shard-2
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-2
+    component: pipeline
+    shard: "2"
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: pipeline-shard-2
+  template:
+    metadata:
+      labels:
+        app: pipeline-shard-2
+        component: pipeline
+        shard: "2"
+    spec:
+      containers:
+      - name: shard
+        image: pipeline-shard:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: SHARD_ID
+          value: "2"
+        - name: MODEL_PATH
+          value: "/storage/models/qwen2.5-coder"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - containerPort: 8080
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1500Mi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-shard-2-service
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-2
+    component: pipeline
+spec:
+  selector:
+    app: pipeline-shard-2
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# Shard 3: layers 21..27 + norm + lm_head -> next token ID
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-shard-3
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-3
+    component: pipeline
+    shard: "3"
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: pipeline-shard-3
+  template:
+    metadata:
+      labels:
+        app: pipeline-shard-3
+        component: pipeline
+        shard: "3"
+    spec:
+      containers:
+      - name: shard
+        image: pipeline-shard:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: SHARD_ID
+          value: "3"
+        - name: MODEL_PATH
+          value: "/storage/models/qwen2.5-coder"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - containerPort: 8080
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1500Mi"
+            cpu: "2000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 180
+          periodSeconds: 30
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-shard-3-service
+  namespace: llm-nursery
+  labels:
+    app: pipeline-shard-3
+    component: pipeline
+spec:
+  selector:
+    app: pipeline-shard-3
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

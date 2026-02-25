@@ -1,0 +1,118 @@
+# paperknight AI - Storage Infrastructure
+# Namespace: paperknight-ai (isolated from llm-nursery and Plex)
+#
+# Two PVCs:
+#   pk-model-storage  - Ollama model weights + RAG data (shared across nodes)
+#   pk-rag-storage    - ChromaDB vector store (dedicated, avoids RWO conflicts)
+#
+# k3s default storage class is 'local-path' (not 'hostpath' like Docker Desktop)
+# For shared PVC across two ZimaBoards, you need NFS or a hostPath on shared mount.
+# See install.sh - it sets up NFS between the two boards automatically.
+---
+# Namespace for all paperknight-ai components
+# Completely isolated from llm-nursery and Plex namespaces
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: paperknight-ai
+  labels:
+    app: paperknight-ai
+    managed-by: paperknight
+---
+# Main model storage PVC - holds Ollama model weights (~14GB for LFM2-24B Q4_K_M)
+# Both ZimaBoards mount this via NFS (see install.sh for NFS setup)
+# storageClassName: nfs-client is set up by install.sh
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pk-model-storage
+  namespace: paperknight-ai
+  labels:
+    app: paperknight-ai
+    component: storage
+spec:
+  accessModes:
+    # ReadWriteMany required for shared access across two nodes
+    - ReadWriteMany
+  resources:
+    requests:
+      # 100GB: ~14GB model + 50GB RAG documents + 36GB headroom
+      storage: 100Gi
+  storageClassName: nfs-client
+---
+# Storage node - creates directory structure and reports ready
+# Runs once on startup, then idles (128Mi limit, cost is negligible)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pk-storage-node
+  namespace: paperknight-ai
+  labels:
+    app: pk-storage-node
+    component: storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pk-storage-node
+  template:
+    metadata:
+      labels:
+        app: pk-storage-node
+        component: storage
+    spec:
+      initContainers:
+      # Create all required directory structure on first run
+      - name: init-dirs
+        image: busybox
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "paperknight AI - initialising storage layout"
+            mkdir -p /storage/ollama
+            mkdir -p /storage/models/lfm2-24b
+            mkdir -p /storage/rag/chromadb
+            mkdir -p /storage/rag/paperknight
+            mkdir -p /storage/rag/security
+            mkdir -p /storage/history
+            echo "Storage layout ready:"
+            ls -la /storage/
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      containers:
+      - name: storage-watcher
+        image: busybox
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "paperknight AI - storage node ready"
+            echo "Paths:"
+            df -h /storage
+            # Keep alive and report storage stats every 5 minutes
+            while true; do
+              sleep 300
+              echo "Storage usage: $(du -sh /storage/* 2>/dev/null | head -20)"
+            done
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            # 128Mi hard cap - matches memory budget table
+            memory: "128Mi"
+            cpu: "50m"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: pk-model-storage

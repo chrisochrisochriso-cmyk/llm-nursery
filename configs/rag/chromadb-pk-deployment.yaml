@@ -1,0 +1,121 @@
+# paperknight AI - ChromaDB Vector Store
+# Namespace: paperknight-ai (isolated from llm-nursery)
+#
+# Stores all RAG knowledge base documents.
+# Coordinator queries this BEFORE every inference request.
+#
+# Memory budget: 512Mi hard cap
+# Storage: pk-model-storage PVC at /storage/rag/chromadb
+#
+# Telemetry is OFF. No data leaves your home network.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chromadb
+  namespace: paperknight-ai
+  labels:
+    app: chromadb
+    component: rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chromadb
+  template:
+    metadata:
+      labels:
+        app: chromadb
+        component: rag
+    spec:
+      initContainers:
+      # Create RAG directory structure before ChromaDB starts
+      - name: mkdir-rag
+        image: busybox
+        command: ["sh", "-c"]
+        args:
+          - |
+            mkdir -p /storage/rag/chromadb
+            mkdir -p /storage/rag/paperknight
+            mkdir -p /storage/rag/security
+            mkdir -p /storage/rag/code
+            mkdir -p /storage/rag/cves
+            echo "RAG directories ready."
+            ls -la /storage/rag/
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      containers:
+      - name: chromadb
+        image: chromadb/chroma:0.5.23
+        env:
+        # Persist to PVC - survives pod restarts
+        - name: IS_PERSISTENT
+          value: "TRUE"
+        - name: PERSIST_DIRECTORY
+          value: "/storage/rag/chromadb"
+        # Zero telemetry - nothing leaves the LAN
+        - name: ANONYMIZED_TELEMETRY
+          value: "FALSE"
+        - name: CHROMA_TELEMETRY
+          value: "FALSE"
+        # Allow reset via API for pk rag --reset (useful for dev)
+        - name: ALLOW_RESET
+          value: "TRUE"
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            # 512Mi hard cap per memory budget
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /api/v1/heartbeat
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 12
+        livenessProbe:
+          httpGet:
+            path: /api/v1/heartbeat
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 3
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: pk-model-storage
+---
+# Internal service - coordinator reaches ChromaDB on port 8000
+apiVersion: v1
+kind: Service
+metadata:
+  name: chromadb-service
+  namespace: paperknight-ai
+  labels:
+    app: chromadb
+    component: rag
+spec:
+  selector:
+    app: chromadb
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+  type: ClusterIP

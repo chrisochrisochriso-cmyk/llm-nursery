@@ -1,0 +1,93 @@
+# Signal CLI REST API - receives and sends Signal messages
+# E2E encrypted: no message content leaves the cluster
+#
+# Setup (one-time, before deploying):
+#   1. kubectl create secret generic signal-credentials \
+#        --from-literal=phone-number=+15551234567 \
+#        -n llm-nursery
+#
+#   2. After deploy, register your number:
+#      kubectl exec -n llm-nursery deployment/signal-cli -- \
+#        curl -X POST http://localhost:8080/v1/register/+15551234567
+#
+#   3. Verify with the code Signal sends:
+#      kubectl exec -n llm-nursery deployment/signal-cli -- \
+#        curl -X POST http://localhost:8080/v1/verify/+15551234567/123456
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signal-cli
+  namespace: llm-nursery
+  labels:
+    app: signal-cli
+    component: messaging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: signal-cli
+  template:
+    metadata:
+      labels:
+        app: signal-cli
+        component: messaging
+    spec:
+      containers:
+      - name: signal-cli
+        image: bbernhard/signal-cli-rest-api:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MODE
+          value: normal
+        - name: AUTO_RECEIVE_SCHEDULE
+          value: ""
+        ports:
+        - containerPort: 8080
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /home/.local/share/signal-cli
+          subPath: signal-cli-data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /v1/about
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /v1/about
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 3
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: signal-cli-service
+  namespace: llm-nursery
+  labels:
+    app: signal-cli
+    component: messaging
+spec:
+  selector:
+    app: signal-cli
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

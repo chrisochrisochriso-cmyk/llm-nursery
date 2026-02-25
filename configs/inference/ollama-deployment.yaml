@@ -1,0 +1,134 @@
+# Ollama inference server - Qwen2.5-Coder-1.5B-Instruct Q4 quantized
+# Runs as a persistent Deployment (not an ephemeral Job)
+# Model is cached on the shared PVC so pod restarts skip the pull
+#
+# Memory: ~1.5Gi idle, ~2.5Gi during generation
+# CPU: ~2-3 cores during generation, 0 idle
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: llm-nursery
+  labels:
+    app: ollama
+    component: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+        component: inference
+    spec:
+      initContainers:
+      - name: pull-model
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "Starting temporary Ollama to pull model..."
+            OLLAMA_MODELS=/storage/ollama ollama serve &
+            OLLAMA_PID=$!
+
+            echo "Waiting for Ollama to be ready..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+                echo "Ollama ready"
+                break
+              fi
+              echo "  waiting ($i/30)..."
+              sleep 2
+            done
+
+            if ollama list 2>/dev/null | grep -q "qwen2.5-coder:1.5b-instruct-q4_0"; then
+              echo "Model already cached on PVC, skipping pull"
+            else
+              echo "Pulling qwen2.5-coder:1.5b-instruct-q4_0 (~1.1GB)..."
+              OLLAMA_MODELS=/storage/ollama ollama pull qwen2.5-coder:1.5b-instruct-q4_0
+              echo "Pull complete"
+            fi
+
+            kill $OLLAMA_PID
+            wait $OLLAMA_PID 2>/dev/null || true
+        env:
+        - name: OLLAMA_MODELS
+          value: /storage/ollama
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2000m"
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        command: ["ollama", "serve"]
+        env:
+        - name: OLLAMA_MODELS
+          value: /storage/ollama
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_NUM_PARALLEL
+          value: "1"
+        - name: OLLAMA_MAX_LOADED_MODELS
+          value: "1"
+        - name: OLLAMA_KEEP_ALIVE
+          value: "30m"
+        ports:
+        - containerPort: 11434
+          name: api
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "3000m"
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 3
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: model-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-service
+  namespace: llm-nursery
+  labels:
+    app: ollama
+    component: inference
+spec:
+  selector:
+    app: ollama
+  ports:
+  - name: api
+    port: 11434
+    targetPort: 11434
+  type: ClusterIP

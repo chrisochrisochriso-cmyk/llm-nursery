@@ -1,0 +1,100 @@
+# Coordinator - FastAPI service that bridges Signal <-> inference
+# Polls signal-cli-rest-api, routes to Ollama (default) or pipeline shards
+#
+# Inference modes (INFERENCE_MODE env var):
+#   "ollama"   - single Ollama call, fast, default
+#   "pipeline" - chains through 4 distributed shards (scale shards first)
+#
+# Secrets required:
+#   kubectl create secret generic signal-credentials \
+#     --from-literal=phone-number=+15551234567 \
+#     -n llm-nursery
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: llm-nursery
+  labels:
+    app: coordinator
+    component: inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator
+  template:
+    metadata:
+      labels:
+        app: coordinator
+        component: inference
+    spec:
+      containers:
+      - name: coordinator
+        image: coordinator:v1
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OLLAMA_URL
+          value: "http://ollama-service:11434"
+        - name: INFERENCE_MODE
+          value: "ollama"
+        - name: MODEL_NAME
+          value: "qwen2.5-coder:1.5b-instruct-q4_0"
+        - name: POLL_INTERVAL
+          value: "3"
+        - name: SHARD_0_URL
+          value: "http://pipeline-shard-0-service:8080"
+        - name: SHARD_1_URL
+          value: "http://pipeline-shard-1-service:8080"
+        - name: SHARD_2_URL
+          value: "http://pipeline-shard-2-service:8080"
+        - name: SHARD_3_URL
+          value: "http://pipeline-shard-3-service:8080"
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: telegram-credentials
+              key: bot-token
+        - name: ALLOWED_CHAT_ID
+          value: ""
+        ports:
+        - containerPort: 8000
+          name: api
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator-service
+  namespace: llm-nursery
+  labels:
+    app: coordinator
+    component: inference
+spec:
+  selector:
+    app: coordinator
+  ports:
+  - name: api
+    port: 8000
+    targetPort: 8000
+  type: ClusterIP
