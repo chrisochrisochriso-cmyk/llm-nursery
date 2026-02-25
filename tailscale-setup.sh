@@ -126,9 +126,9 @@ if [[ "$PLATFORM" == "linux" ]]; then
     echo ""
     echo "  You'll be shown a URL. Open it on any device to authorise this node."
     echo ""
-    echo -e "  ${YELLOW}IMPORTANT: Log in with chriso's Tailscale account.${RESET}"
-    echo "  chriso will give you the login details before you run this."
-    echo "  All devices must use the same account to reach each other."
+    echo -e "  ${YELLOW}IMPORTANT: Log in with your own Tailscale account.${RESET}"
+    echo "  Accept chriso's invite link first (check your email/messages) to create your account."
+    echo "  Once you accept, your devices join chriso's network automatically."
     echo "  (Or use your phone if you're at dad's place)"
     echo ""
 

@@ -263,9 +263,9 @@ if [[ "$OS" == "Linux" ]]; then
     echo ""
     echo "  A URL will appear below. Open it on any browser or your phone."
     echo ""
-    echo -e "  ${YELLOW}IMPORTANT: Log in with chriso's Tailscale account.${RESET}"
-    echo "  chriso will give you the email and password before you run this."
-    echo "  All devices must be in the same Tailscale account to talk to each other."
+    echo -e "  ${YELLOW}IMPORTANT: Log in with your Tailscale account (johno's).${RESET}"
+    echo "  chriso should have sent you an invite link — accept it first to create your account."
+    echo "  Once you accept the invite, your account joins chriso's network automatically."
     echo ""
 
     # --ssh enables SSH over Tailscale (key-based, no password)
