@@ -48,28 +48,48 @@ spec:
         command: ["sh", "-c"]
         args:
           - |
+            set -e
             echo "paperknight AI - Node 1 init"
             echo "Starting temporary Ollama to pull LFM2-24B..."
             OLLAMA_MODELS=/storage/ollama ollama serve &
             OLLAMA_PID=$!
 
             # Wait for Ollama to be ready (up to 60s)
+            READY=false
             for i in $(seq 1 30); do
               if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
                 echo "Ollama ready on node1"
+                READY=true
                 break
               fi
               echo "  waiting ($i/30)..."
               sleep 2
             done
 
+            if [[ "$READY" != "true" ]]; then
+              echo "ERROR: Ollama did not start within 60 seconds"
+              kill $OLLAMA_PID 2>/dev/null || true
+              exit 1
+            fi
+
             # Check if model is already cached
             if OLLAMA_MODELS=/storage/ollama ollama list 2>/dev/null | grep -q "lfm2:24b"; then
               echo "LFM2-24B already cached on PVC - skipping pull"
             else
               echo "Pulling lfm2:24b (~13.5GB Q4_K_M - this takes a while on first run)..."
-              OLLAMA_MODELS=/storage/ollama ollama pull lfm2:24b
-              echo "Pull complete"
+              OLLAMA_MODELS=/storage/ollama ollama pull lfm2:24b \
+                || { echo "ERROR: Pull failed - check network connectivity"; kill $OLLAMA_PID; exit 1; }
+
+              # Verify the model actually landed
+              if ! OLLAMA_MODELS=/storage/ollama ollama list 2>/dev/null | grep -q "lfm2:24b"; then
+                echo "ERROR: Pull appeared to succeed but lfm2:24b is not in ollama list"
+                echo "  Storage path: /storage/ollama"
+                echo "  Available models:"
+                OLLAMA_MODELS=/storage/ollama ollama list 2>/dev/null || true
+                kill $OLLAMA_PID
+                exit 1
+              fi
+              echo "Pull complete - lfm2:24b verified on PVC"
             fi
 
             kill $OLLAMA_PID

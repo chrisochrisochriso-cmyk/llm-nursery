@@ -51,14 +51,23 @@ spec:
         args:
           - |
             echo "paperknight AI - Node 2 init"
-            # Check model weights exist on shared storage
-            if [ -d "/storage/ollama" ]; then
-              echo "Model storage found - node 2 ready"
-            else
-              echo "WARNING: /storage/ollama not found - node1 must pull model first"
-              echo "Run: kubectl rollout restart deployment/ollama-node1 -n paperknight-ai"
-              exit 1
-            fi
+            # Model weights must already be on the PVC from node1's pull.
+            # If they're not here, node1 hasn't finished its init yet - wait for it.
+            ATTEMPTS=0
+            MAX_ATTEMPTS=30
+            until [ -d "/storage/ollama" ] && ls /storage/ollama/manifests 2>/dev/null | grep -q .; do
+              ATTEMPTS=$((ATTEMPTS+1))
+              if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+                echo "ERROR: Model weights not found on shared storage after $((MAX_ATTEMPTS*10))s"
+                echo "  Expected path: /storage/ollama"
+                echo "  Node 1 must complete its model pull before Node 2 can start."
+                echo "  Check node1 logs: kubectl logs -n paperknight-ai deployment/ollama-node1 -c pull-model"
+                exit 1
+              fi
+              echo "  Waiting for node1 to finish pulling model... ($ATTEMPTS/$MAX_ATTEMPTS)"
+              sleep 10
+            done
+            echo "Model weights found on PVC - node 2 ready"
         volumeMounts:
         - name: storage
           mountPath: /storage

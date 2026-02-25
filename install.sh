@@ -57,6 +57,21 @@ echo "Private AI on your ZimaBoards. No cloud. No API costs."
 echo "LFM2-24B runs entirely on your hardware."
 echo ""
 
+# Confirm we're running from the cloned repo (not piped from curl)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -f "$SCRIPT_DIR/configs/storage/storage-pk-infrastructure.yaml" ]]; then
+    echo -e "${RED}  ✗ ERROR:${RESET} Run this from the cloned repo, not piped from curl."
+    echo ""
+    echo "  First clone the repo:"
+    echo "    git clone https://github.com/chrisochrisochriso-cmyk/llm-nursery.git"
+    echo "    cd llm-nursery"
+    echo "    bash install.sh"
+    echo ""
+    exit 1
+fi
+ok "Running from repo: $SCRIPT_DIR"
+echo ""
+
 # ---------------------------------------------------------------------------
 # Step 1: Three questions
 # ---------------------------------------------------------------------------
@@ -355,6 +370,37 @@ if [[ "$NODE_ROLE" == "primary" ]]; then
     kubectl apply -f "$CONFIGS_DIR/inference/ollama-node2-deployment.yaml" \
         || die "Ollama Node 2 deploy failed"
     ok "Ollama Node 2 deployed"
+
+    # Build coordinator image and import into k3s
+    # k3s uses containerd (not Docker), so we build with Docker then import.
+    info "Building coordinator image (pk-coordinator:v1)..."
+    show_time "3-5 minutes on first build"
+
+    # Install Docker if not present (needed to build the image)
+    if ! command -v docker &>/dev/null; then
+        info "Docker not found - installing..."
+        curl -fsSL https://get.docker.com | sh \
+            || die "Docker install failed - install manually: https://docs.docker.com/engine/install"
+        # Add current user to docker group
+        sudo usermod -aG docker "$USER" 2>/dev/null || true
+        ok "Docker installed"
+    else
+        ok "Docker found"
+    fi
+
+    # Build the coordinator image
+    docker build \
+        -t pk-coordinator:v1 \
+        -f "$SCRIPT_DIR/src/coordinator/Dockerfile.pk" \
+        "$SCRIPT_DIR/src/coordinator/" \
+        || die "Coordinator image build failed - check src/coordinator/Dockerfile.pk"
+    ok "Image built: pk-coordinator:v1"
+
+    # Import into k3s containerd so the deployment can find it
+    info "Importing image into k3s..."
+    docker save pk-coordinator:v1 | sudo k3s ctr images import - \
+        || die "Image import into k3s failed"
+    ok "Image imported into k3s"
 
     info "Deploying Coordinator..."
     kubectl apply -f "$CONFIGS_DIR/inference/coordinator-pk-deployment.yaml" \
