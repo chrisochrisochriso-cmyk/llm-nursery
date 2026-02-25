@@ -467,18 +467,23 @@ MacBook                                 ZimaBoard 1
 
 ### Setup (one time)
 
-**On the ZimaBoards** — this runs automatically during `install.sh`.
+**Step 0 — chriso creates the Tailscale account (do this first, in Wales):**
+
+1. Go to [tailscale.com](https://tailscale.com) and create a free account
+2. Install Tailscale on your MacBook: `brew install tailscale` or download from tailscale.com/download
+3. Log in with that account: `sudo tailscale up`
+4. Share the account email and password with johno so he can log the ZimaBoards in
+
+**On the ZimaBoards** — `install.sh` handles this automatically.
+During install, johno will be shown a URL and asked to log in — he uses chriso's account.
 Each ZimaBoard gets a Tailscale IP like `100.x.x.x`. The installer prints it at the end.
 
-**On chriso's MacBook:**
+**On chriso's MacBook** — already done if you followed Step 0 above.
+To reconnect after a reboot or check status:
 
 ```bash
-# Run the Tailscale setup script from this repo
-bash tailscale-setup.sh
-
-# Or install manually:
-brew install tailscale
 sudo tailscale up
+tailscale ip -4    # shows your MacBook's Tailscale IP
 ```
 
 Then point `pk` at the ZimaBoard's Tailscale IP:
@@ -513,7 +518,7 @@ ssh root@100.x.x.x    # ZimaBoard 1
 ssh root@100.x.x.y    # ZimaBoard 2 (different Tailscale IP)
 ```
 
-No password needed. Tailscale handles authentication using your Tailscale account.
+No password needed. Tailscale handles authentication — all devices are in chriso's account.
 
 ### Finding Tailscale IPs
 

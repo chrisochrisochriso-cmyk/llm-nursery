@@ -261,8 +261,11 @@ if [[ "$OS" == "Linux" ]]; then
 
     info "Connecting to Tailscale network..."
     echo ""
-    echo "  A URL will appear below. Open it to authorise this ZimaBoard."
-    echo "  Use your phone or any browser - you just need to log in once."
+    echo "  A URL will appear below. Open it on any browser or your phone."
+    echo ""
+    echo -e "  ${YELLOW}IMPORTANT: Log in with chriso's Tailscale account.${RESET}"
+    echo "  chriso will give you the email and password before you run this."
+    echo "  All devices must be in the same Tailscale account to talk to each other."
     echo ""
 
     # --ssh enables SSH over Tailscale (key-based, no password)
@@ -279,6 +282,10 @@ elif [[ "$OS" == "Darwin" ]]; then
     if command -v tailscale &>/dev/null; then
         ok "Tailscale already installed"
         info "Connecting..."
+        echo ""
+        echo "  Make sure you are logged into chriso's Tailscale account."
+        echo "  (chriso: your MacBook should already be connected - check the menu bar app)"
+        echo ""
         tailscale up --accept-routes 2>/dev/null \
             || warn "Run: sudo tailscale up  (or use the menu bar app)"
         TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "check menu bar app")
@@ -290,7 +297,7 @@ elif [[ "$OS" == "Darwin" ]]; then
         echo "    brew install tailscale"
         echo "    Download from: https://tailscale.com/download"
         echo ""
-        echo "  Then run: tailscale-setup.sh  (in this repo) to connect"
+        echo "  Then log in with chriso's Tailscale account and re-run this script."
         TAILSCALE_IP="not installed yet"
     fi
 fi

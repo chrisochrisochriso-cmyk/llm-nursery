@@ -125,6 +125,10 @@ if [[ "$PLATFORM" == "linux" ]]; then
     info "Starting Tailscale with SSH enabled..."
     echo ""
     echo "  You'll be shown a URL. Open it on any device to authorise this node."
+    echo ""
+    echo -e "  ${YELLOW}IMPORTANT: Log in with chriso's Tailscale account.${RESET}"
+    echo "  chriso will give you the login details before you run this."
+    echo "  All devices must use the same account to reach each other."
     echo "  (Or use your phone if you're at dad's place)"
     echo ""
 
