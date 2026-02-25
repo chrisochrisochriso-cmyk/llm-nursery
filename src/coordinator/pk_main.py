@@ -40,10 +40,9 @@ logger = logging.getLogger("pk-coordinator")
 # ---------------------------------------------------------------------------
 # Config (all via environment variables)
 # ---------------------------------------------------------------------------
-OLLAMA_NODE1_URL = os.environ.get("OLLAMA_NODE1_URL", "http://ollama-node1-service:11434")
-OLLAMA_NODE2_URL = os.environ.get("OLLAMA_NODE2_URL", "http://ollama-node2-service:11434")
-MODEL_NAME = os.environ.get("MODEL_NAME", "lfm2:24b")
-CHROMADB_URL = os.environ.get("CHROMADB_URL", "http://chromadb-service:8000")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+MODEL_NAME = os.environ.get("MODEL_NAME", "llama3.1:8b")
+CHROMADB_URL = os.environ.get("CHROMADB_URL", "http://localhost:8000")
 RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
 HISTORY_PATH = Path(os.environ.get("HISTORY_PATH", "/storage/history"))
 
@@ -145,16 +144,15 @@ async def query_rag(query: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 async def get_available_ollama() -> str:
-    """Return URL of first healthy Ollama node. Tries node1 first."""
-    for url in (OLLAMA_NODE1_URL, OLLAMA_NODE2_URL):
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.get(f"{url}/api/tags")
-                if r.status_code == 200:
-                    return url
-        except Exception:
-            continue
-    raise HTTPException(status_code=503, detail="No Ollama nodes available")
+    """Return Ollama URL if healthy, raise 503 otherwise."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            if r.status_code == 200:
+                return OLLAMA_URL
+    except Exception:
+        pass
+    raise HTTPException(status_code=503, detail="Ollama is not available")
 
 
 async def stream_ollama(
@@ -342,8 +340,7 @@ class ScanRequest(BaseModel):
 class StatusResponse(BaseModel):
     status: str
     model: str
-    node1: str
-    node2: str
+    ollama: str
     rag: str
     history_entries: int
 
@@ -385,19 +382,19 @@ async def status() -> dict:
     """Full cluster health - used by `pk status` dashboard."""
     results = {"model": MODEL_NAME, "status": "ok"}
 
-    # Check Ollama nodes
-    for name, url in (("node1", OLLAMA_NODE1_URL), ("node2", OLLAMA_NODE2_URL)):
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.get(f"{url}/api/tags")
-                if r.status_code == 200:
-                    tags = r.json().get("models", [])
-                    has_model = any("lfm2" in m.get("name", "") for m in tags)
-                    results[name] = "ready" if has_model else "no-model"
-                else:
-                    results[name] = "degraded"
-        except Exception:
-            results[name] = "offline"
+    # Check Ollama
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            if r.status_code == 200:
+                tags = r.json().get("models", [])
+                model_short = MODEL_NAME.split(":")[0]
+                has_model = any(model_short in m.get("name", "") for m in tags)
+                results["ollama"] = "ready" if has_model else "no-model"
+            else:
+                results["ollama"] = "degraded"
+    except Exception:
+        results["ollama"] = "offline"
 
     # Check ChromaDB
     try:
