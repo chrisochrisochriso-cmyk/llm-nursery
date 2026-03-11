@@ -56,11 +56,11 @@ services:
     container_name: pk-coordinator
     restart: unless-stopped
     ports:
-      - "30800:8080"              # pk CLI connects here from MacBook
+      - "30800:8000"              # pk CLI connects here from MacBook
     environment:
       - OLLAMA_URL=http://ollama:11434
       - CHROMADB_URL=http://chromadb:8000
-      - MODEL_NAME=llama3.1:8b
+      - MODEL_NAME=qwen2.5-coder:14b
     volumes:
       - history-data:/storage/history
     mem_limit: 512m

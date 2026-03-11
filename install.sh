@@ -188,8 +188,9 @@ ok "Python found"
 
 info "Installing dependencies..."
 pip3 install --quiet typer rich httpx pyyaml 2>/dev/null \
-    || pip install --quiet typer rich httpx pyyaml 2>/dev/null \
-    || die "pip install failed - try: pip3 install typer rich httpx pyyaml"
+    || pip3 install --quiet --break-system-packages typer rich httpx pyyaml 2>/dev/null \
+    || pip install --quiet --break-system-packages typer rich httpx pyyaml 2>/dev/null \
+    || die "pip install failed - try: pip3 install --break-system-packages typer rich httpx pyyaml"
 ok "Dependencies installed"
 
 CLI_SRC="$SCRIPT_DIR/src/cli/main.py"
