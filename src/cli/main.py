@@ -28,6 +28,7 @@ import httpx
 import typer
 import yaml
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -93,12 +94,12 @@ def stream_response(
     response: httpx.Response,
     quiet: bool = False,
     json_output: bool = False,
+    thinking_msg: str = "Thinking",
 ) -> str:
-    """Stream response to terminal, return full text."""
+    """Collect streamed response, show spinner, print full result."""
     full_text = []
 
     if json_output:
-        # Collect all chunks, output as JSON at end
         for chunk in response.iter_text():
             full_text.append(chunk)
         result = "".join(full_text)
@@ -112,16 +113,16 @@ def stream_response(
         print()
         return "".join(full_text)
 
-    # Rich streaming with severity colouring
-    current_line = []
-    for chunk in response.iter_text():
-        full_text.append(chunk)
-        current_line.append(chunk)
-        # Print chunks as they arrive
-        console.print(chunk, end="", markup=False)
+    # Collect silently while showing spinner
+    with console.status(f"[dim]{thinking_msg}...[/dim]", spinner="dots"):
+        for chunk in response.iter_text():
+            full_text.append(chunk)
 
-    console.print()  # final newline
-    return "".join(full_text)
+    result = "".join(full_text)
+    console.print()
+    console.print(Markdown(result))
+    console.print()
+    return result
 
 
 def print_error(msg: str, quiet: bool = False) -> None:
@@ -163,7 +164,7 @@ def ask(
                 if resp.status_code != 200:
                     print_error(f"Coordinator error: {resp.status_code}", quiet)
                     raise typer.Exit(1)
-                stream_response(resp, quiet=quiet, json_output=json_output)
+                stream_response(resp, quiet=quiet, json_output=json_output, thinking_msg="Thinking")
 
     except httpx.ConnectError:
         print_error(
@@ -217,7 +218,7 @@ def review(
                 if resp.status_code != 200:
                     print_error(f"Coordinator error: {resp.status_code}", quiet)
                     raise typer.Exit(1)
-                stream_response(resp, quiet=quiet, json_output=json_output)
+                stream_response(resp, quiet=quiet, json_output=json_output, thinking_msg="Reviewing code")
 
     except httpx.ConnectError:
         print_error(f"Cannot reach coordinator at {coordinator}", quiet)
@@ -266,7 +267,7 @@ def scan(
                 if resp.status_code != 200:
                     print_error(f"Coordinator error: {resp.status_code}", quiet)
                     raise typer.Exit(1)
-                stream_response(resp, quiet=quiet, json_output=json_output)
+                stream_response(resp, quiet=quiet, json_output=json_output, thinking_msg="Scanning for vulnerabilities")
 
     except httpx.ConnectError:
         print_error(f"Cannot reach coordinator at {coordinator}", quiet)
@@ -316,16 +317,16 @@ def status(
         return "[green]✓[/green]" if s == "ok" else "[red]✗[/red]"
 
     model = data.get("model", "unknown")
-    node1 = data.get("node1", "unknown")
-    node2 = data.get("node2", "unknown")
+    ollama = data.get("ollama", "unknown")
     rag = data.get("rag", "unknown")
     rag_docs = data.get("rag_documents", "?")
     history = data.get("history_today", 0)
 
+    ollama_ok = ollama == "ready"
+
     lines = [
-        f" Model        {model:<20} {node_indicator(node1)}",
-        f" Node 1       ZimaBoard 1            {node_indicator(node1)}",
-        f" Node 2       ZimaBoard 2            {node_indicator(node2)}",
+        f" Model        {model:<20} {'[green]✓[/green]' if ollama_ok else '[red]✗[/red]'}",
+        f" Ollama       {'Ready' if ollama_ok else ollama:<20} {'[green]✓[/green]' if ollama_ok else '[red]✗[/red]'}",
         f" Coordinator  Running                [green]✓[/green]",
         f" RAG          {rag_docs} documents         {rag_indicator(rag)}",
         f" Queries      {history} today",
@@ -336,7 +337,7 @@ def status(
         Panel(
             panel_content,
             title=f"[bold]paperknight AI - {username}[/bold]",
-            border_style="green" if node1 == "ready" else "red",
+            border_style="green" if ollama_ok else "red",
         )
     )
 
