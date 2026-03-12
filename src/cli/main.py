@@ -155,7 +155,7 @@ def ask(
     profile = get_profile_name()
 
     try:
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=600.0) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/ask",
@@ -204,7 +204,7 @@ def review(
         console.print(f"[dim]Reviewing: {filename}[/dim]")
 
     try:
-        with httpx.Client(timeout=180.0) as client:
+        with httpx.Client(timeout=600.0) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/review",
@@ -253,7 +253,7 @@ def scan(
         console.print(f"[dim]Scanning: {filename}[/dim]")
 
     try:
-        with httpx.Client(timeout=180.0) as client:
+        with httpx.Client(timeout=600.0) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/scan",
