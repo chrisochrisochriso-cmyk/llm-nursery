@@ -6,11 +6,11 @@
 #   - ChromaDB      RAG vector store, internal only
 #   - Coordinator   FastAPI bridge + RAG, port 30800
 #
-# Memory budget (ZimaBoard 8GB):
-#   Ollama:      6GB  (Llama 3.1 8B Q4 = ~5GB, 1GB headroom)
+# Memory budget (GMKtec 16GB):
+#   Ollama:      11GB (qwen2.5-coder:14b Q4 = ~8.7GB, headroom for spikes)
 #   Coordinator: 512MB
 #   ChromaDB:    256MB
-#   OS:          ~1GB
+#   OS+WSL2:     ~4GB
 #
 # Usage:
 #   docker compose up -d          start all
@@ -34,7 +34,7 @@ services:
       - OLLAMA_KEEP_ALIVE=1h      # keep model hot in RAM
       - OLLAMA_NUM_PARALLEL=1     # one request at a time on this hardware
       - OLLAMA_MAX_LOADED_MODELS=1
-    mem_limit: 6g
+    mem_limit: 11g
     cpus: '4.0'
 
   chromadb:
