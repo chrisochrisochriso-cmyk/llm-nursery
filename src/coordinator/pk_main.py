@@ -174,7 +174,7 @@ async def stream_ollama(
         },
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=600.0) as client:
         async with client.stream("POST", f"{ollama_url}/api/chat", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -300,12 +300,44 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str
     return [c for c in chunks if len(c.strip()) > 50]
 
 
+async def warmup_model():
+    """Ping Ollama on startup to load the model into RAM."""
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            logger.info("Warming up model %s (this may take a minute)...", MODEL_NAME)
+            await client.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": MODEL_NAME, "prompt": "hi", "stream": False},
+            )
+            logger.info("Model warm and ready")
+    except Exception as e:
+        logger.warning("Warmup failed (will retry on first request): %s", e)
+
+
+async def keepalive_loop():
+    """Ping Ollama every 10 minutes so the model stays loaded in RAM."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                await client.post(
+                    f"{OLLAMA_URL}/api/generate",
+                    json={"model": MODEL_NAME, "prompt": "", "stream": False, "keep_alive": "1h"},
+                )
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     HISTORY_PATH.mkdir(parents=True, exist_ok=True)
     # Pre-load embedding model so first add doesn't pause inference
     await asyncio.to_thread(get_embedder)
     await ensure_collection()
+    # Warm up the LLM so first request is instant
+    asyncio.create_task(warmup_model())
+    # Keep model hot in RAM between requests
+    asyncio.create_task(keepalive_loop())
     logger.info("pk-coordinator started (model=%s)", MODEL_NAME)
     yield
 
