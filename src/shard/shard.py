@@ -1,10 +1,10 @@
 """
-Pipeline shard service for distributed Llama 3.2 3B inference.
+Pipeline shard service for distributed Qwen2.5-3B-Instruct inference.
 
 Each shard loads a specific range of transformer layers from HuggingFace,
 keeping only ~1/4 of model parameters in memory at steady state.
 
-Layer assignment for Llama-3.2-3B-Instruct (28 transformer layers):
+Layer assignment for Qwen2.5-3B-Instruct (28 transformer layers):
   Shard 0:  embed_tokens + layers 0..6   (text -> hidden states)
   Shard 1:  layers 7..13                 (hidden states passthrough)
   Shard 2:  layers 14..20               (hidden states passthrough)
@@ -41,7 +41,7 @@ logger = logging.getLogger("shard")
 # Config
 # ---------------------------------------------------------------------------
 SHARD_ID = int(os.environ.get("SHARD_ID", "0"))
-MODEL_PATH = os.environ.get("MODEL_PATH", "meta-llama/Llama-3.2-3B-Instruct")
+MODEL_PATH = os.environ.get("MODEL_PATH", "Qwen/Qwen2.5-3B-Instruct")
 HF_TOKEN  = os.environ.get("HF_TOKEN", "")
 
 # Layer ranges for Qwen2.5-Coder-1.5B-Instruct (28 layers, 0-indexed)

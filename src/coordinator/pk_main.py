@@ -54,8 +54,8 @@ SHARD_URLS = {
     3: os.environ.get("SHARD_3_URL", "http://shard-3:8080"),
 }
 
-# Llama 3.x EOS token IDs
-_LLAMA_EOS_IDS = {128009, 128001}  # <|eot_id|> and <|end_of_text|>
+# Qwen2.5 EOS token IDs
+_LLAMA_EOS_IDS = {151645, 151643}  # <|im_end|> and <|endoftext|>
 
 # Embedding model - loaded once at startup, stays in memory (~200MB)
 _embedder: Optional[SentenceTransformer] = None
@@ -208,12 +208,11 @@ async def stream_ollama(
 
 
 def _llama_chat_prompt(system_prompt: str, user_message: str) -> str:
-    """Build Llama 3.x chat format prompt string."""
+    """Build Qwen2.5 ChatML format prompt string."""
     return (
-        "<|begin_of_text|>"
-        f"<|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|>"
-        f"<|start_header_id|>user<|end_header_id|>\n\n{user_message}<|eot_id|>"
-        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+        f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+        f"<|im_start|>user\n{user_message}<|im_end|>\n"
+        "<|im_start|>assistant\n"
     )
 
 
