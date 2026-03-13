@@ -1,10 +1,10 @@
 """
-Pipeline shard service for distributed Qwen2.5-Coder inference.
+Pipeline shard service for distributed Llama 3.2 3B inference.
 
-Each shard loads a specific range of transformer layers from the PVC,
+Each shard loads a specific range of transformer layers from HuggingFace,
 keeping only ~1/4 of model parameters in memory at steady state.
 
-Layer assignment for Qwen2.5-Coder-1.5B-Instruct (28 transformer layers):
+Layer assignment for Llama-3.2-3B-Instruct (28 transformer layers):
   Shard 0:  embed_tokens + layers 0..6   (text -> hidden states)
   Shard 1:  layers 7..13                 (hidden states passthrough)
   Shard 2:  layers 14..20               (hidden states passthrough)
@@ -13,9 +13,9 @@ Layer assignment for Qwen2.5-Coder-1.5B-Instruct (28 transformer layers):
 Tensor serialization: base64-encoded float16 numpy arrays passed as JSON.
 No KV cache across shard boundaries - each generation step is a full pass.
 
-Memory note: startup briefly loads the full ~3GB model to extract layers,
-then frees unused portions. Peak memory ~3GB per shard during init,
-~400MB at steady state. Start shards sequentially on 8GB machines.
+Memory note: startup briefly loads the full ~6GB model to extract layers,
+then frees unused portions. Peak ~6GB per shard during init (low_cpu_mem_usage
+reduces this), ~1.5GB at steady state. Start shards sequentially.
 """
 
 import base64
@@ -41,7 +41,8 @@ logger = logging.getLogger("shard")
 # Config
 # ---------------------------------------------------------------------------
 SHARD_ID = int(os.environ.get("SHARD_ID", "0"))
-MODEL_PATH = os.environ.get("MODEL_PATH", "/storage/models/qwen2.5-coder")
+MODEL_PATH = os.environ.get("MODEL_PATH", "meta-llama/Llama-3.2-3B-Instruct")
+HF_TOKEN  = os.environ.get("HF_TOKEN", "")
 
 # Layer ranges for Qwen2.5-Coder-1.5B-Instruct (28 layers, 0-indexed)
 _LAYER_CFG = {
@@ -94,6 +95,12 @@ def _causal_mask(seq_len: int, dtype: torch.dtype) -> torch.Tensor:
 
 def _load_shard() -> None:
     global _modules, _tokenizer
+
+    # Authenticate with HuggingFace if token provided
+    if HF_TOKEN:
+        from huggingface_hub import login as hf_login
+        hf_login(token=HF_TOKEN)
+        logger.info("HuggingFace login OK")
 
     cfg = _LAYER_CFG[SHARD_ID]
     logger.info(

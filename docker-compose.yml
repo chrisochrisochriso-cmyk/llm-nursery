@@ -2,15 +2,18 @@
 # GMKtec (Windows 11 + WSL2) setup
 #
 # Services:
-#   - Ollama        Llama 3.1 8B inference, CPU only, port 11434
+#   - Ollama        Llama 3.1 8B inference, CPU only, port 11434 (fallback)
 #   - ChromaDB      RAG vector store, internal only
 #   - Coordinator   FastAPI bridge + RAG + web UI, port 30800
+#   - shard-0..3    Llama 3.2 3B pipeline shards (primary inference)
 #
 # Memory budget (GMKtec 16GB):
-#   Ollama:      7GB  (llama3.1:8b Q4 = ~4.7GB, headroom for spikes)
+#   Ollama:      7GB  (llama3.1:8b Q4 = ~4.7GB, fallback only)
+#   Shards:      ~1.5GB each x4 = ~6GB steady state
 #   Coordinator: 512MB
 #   ChromaDB:    256MB
 #   OS+WSL2:     ~4GB
+#   NOTE: don't run Ollama + all shards at full load simultaneously
 #
 # Usage:
 #   docker compose up -d          start all
@@ -29,11 +32,11 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     environment:
-      - OLLAMA_NUM_GPU=0          # CPU only
-      - OLLAMA_NUM_THREADS=4      # match GMKtec CPU cores (adjust if more cores available)
-      - OLLAMA_NUM_CTX=2048       # context window
-      - OLLAMA_KEEP_ALIVE=1h      # keep model hot in RAM
-      - OLLAMA_NUM_PARALLEL=1     # one request at a time
+      - OLLAMA_NUM_GPU=0
+      - OLLAMA_NUM_THREADS=4
+      - OLLAMA_NUM_CTX=2048
+      - OLLAMA_KEEP_ALIVE=1h
+      - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
     mem_limit: 7g
     cpus: '4.0'
@@ -47,7 +50,6 @@ services:
     environment:
       - ANONYMIZED_TELEMETRY=False
     mem_limit: 256m
-    # Internal only - coordinator talks to this, not exposed to host
 
   coordinator:
     build:
@@ -57,20 +59,96 @@ services:
     container_name: pk-coordinator
     restart: unless-stopped
     ports:
-      - "30800:8000"              # pk CLI connects here from MacBook
+      - "30800:8000"
     environment:
       - OLLAMA_URL=http://ollama:11434
       - CHROMADB_URL=http://chromadb:8000
       - MODEL_NAME=llama3.1:8b
+      - INFERENCE_MODE=pipeline
+      - SHARD_0_URL=http://shard-0:8080
+      - SHARD_1_URL=http://shard-1:8080
+      - SHARD_2_URL=http://shard-2:8080
+      - SHARD_3_URL=http://shard-3:8080
     volumes:
-      - ./certs:/certs:ro        # TLS cert + key for HTTPS
+      - ./certs:/certs:ro
       - history-data:/storage/history
     mem_limit: 512m
     depends_on:
       - ollama
       - chromadb
 
+  # ---------------------------------------------------------------------------
+  # Pipeline shards - Llama 3.2 3B split across 4 containers
+  # Start sequentially (each briefly uses ~6GB during model init)
+  # Steady state: ~1.5GB per shard
+  # ---------------------------------------------------------------------------
+
+  shard-0:
+    build:
+      context: ./src/shard
+    image: pk-shard:v1
+    container_name: pk-shard-0
+    restart: unless-stopped
+    environment:
+      - SHARD_ID=0
+      - MODEL_PATH=meta-llama/Llama-3.2-3B-Instruct
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf-cache
+    volumes:
+      - hf-cache:/hf-cache    # shared model cache - downloaded once
+    mem_limit: 3g
+    cpus: '1.0'
+
+  shard-1:
+    image: pk-shard:v1
+    container_name: pk-shard-1
+    restart: unless-stopped
+    environment:
+      - SHARD_ID=1
+      - MODEL_PATH=meta-llama/Llama-3.2-3B-Instruct
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf-cache
+    volumes:
+      - hf-cache:/hf-cache
+    mem_limit: 3g
+    cpus: '1.0'
+    depends_on:
+      - shard-0
+
+  shard-2:
+    image: pk-shard:v1
+    container_name: pk-shard-2
+    restart: unless-stopped
+    environment:
+      - SHARD_ID=2
+      - MODEL_PATH=meta-llama/Llama-3.2-3B-Instruct
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf-cache
+    volumes:
+      - hf-cache:/hf-cache
+    mem_limit: 3g
+    cpus: '1.0'
+    depends_on:
+      - shard-1
+
+  shard-3:
+    image: pk-shard:v1
+    container_name: pk-shard-3
+    restart: unless-stopped
+    environment:
+      - SHARD_ID=3
+      - MODEL_PATH=meta-llama/Llama-3.2-3B-Instruct
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf-cache
+    volumes:
+      - hf-cache:/hf-cache
+    mem_limit: 3g
+    cpus: '1.0'
+    depends_on:
+      - shard-2
+
 volumes:
-  ollama-data:    # model weights (~5GB) - persists across restarts
+  ollama-data:    # llama3.1:8b GGUF (Ollama fallback)
+  hf-cache:       # Llama 3.2 3B HuggingFace weights (shared by all shards)
   chroma-data:    # RAG knowledge base
   history-data:   # query history

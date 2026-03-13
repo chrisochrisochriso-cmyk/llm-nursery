@@ -40,11 +40,22 @@ logger = logging.getLogger("pk-coordinator")
 # ---------------------------------------------------------------------------
 # Config (all via environment variables)
 # ---------------------------------------------------------------------------
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-MODEL_NAME = os.environ.get("MODEL_NAME", "llama3.1:8b")
-CHROMADB_URL = os.environ.get("CHROMADB_URL", "http://localhost:8000")
-RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
-HISTORY_PATH = Path(os.environ.get("HISTORY_PATH", "/storage/history"))
+OLLAMA_URL      = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+MODEL_NAME      = os.environ.get("MODEL_NAME", "llama3.1:8b")
+CHROMADB_URL    = os.environ.get("CHROMADB_URL", "http://localhost:8000")
+RAG_TOP_K       = int(os.environ.get("RAG_TOP_K", "5"))
+HISTORY_PATH    = Path(os.environ.get("HISTORY_PATH", "/storage/history"))
+INFERENCE_MODE  = os.environ.get("INFERENCE_MODE", "ollama")  # ollama | pipeline
+
+SHARD_URLS = {
+    0: os.environ.get("SHARD_0_URL", "http://shard-0:8080"),
+    1: os.environ.get("SHARD_1_URL", "http://shard-1:8080"),
+    2: os.environ.get("SHARD_2_URL", "http://shard-2:8080"),
+    3: os.environ.get("SHARD_3_URL", "http://shard-3:8080"),
+}
+
+# Llama 3.x EOS token IDs
+_LLAMA_EOS_IDS = {128009, 128001}  # <|eot_id|> and <|end_of_text|>
 
 # Embedding model - loaded once at startup, stays in memory (~200MB)
 _embedder: Optional[SentenceTransformer] = None
@@ -196,22 +207,121 @@ async def stream_ollama(
                     continue
 
 
+def _llama_chat_prompt(system_prompt: str, user_message: str) -> str:
+    """Build Llama 3.x chat format prompt string."""
+    return (
+        "<|begin_of_text|>"
+        f"<|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|>"
+        f"<|start_header_id|>user<|end_header_id|>\n\n{user_message}<|eot_id|>"
+        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    )
+
+
+async def _check_shards() -> bool:
+    """Return True if all 4 shards are healthy."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            for url in SHARD_URLS.values():
+                r = await client.get(f"{url}/health")
+                if r.status_code != 200:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
+async def stream_pipeline(
+    system_prompt: str,
+    user_message: str,
+    max_new_tokens: int = 512,
+) -> AsyncIterator[str]:
+    """Stream tokens through the 4-shard pipeline."""
+    prompt = _llama_chat_prompt(system_prompt, user_message)
+    generated_ids: list[int] = []
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for _ in range(max_new_tokens):
+            # Reconstruct full text for this step
+            current_text = prompt
+            if generated_ids:
+                dec = await client.post(
+                    f"{SHARD_URLS[0]}/decode", json={"token_ids": generated_ids}
+                )
+                dec.raise_for_status()
+                current_text += dec.json()["text"]
+
+            # Shard 0: tokenise + embed
+            r = await client.post(
+                f"{SHARD_URLS[0]}/embed",
+                json={"text": current_text, "temperature": 0.7},
+            )
+            r.raise_for_status()
+            data = r.json()
+
+            # Shards 1-2: hidden state passthrough
+            for sid in (1, 2):
+                r = await client.post(
+                    f"{SHARD_URLS[sid]}/forward",
+                    json={
+                        "hidden_states": data["hidden_states"],
+                        "seq_len": data["seq_len"],
+                        "temperature": 0.7,
+                    },
+                )
+                r.raise_for_status()
+                data = r.json()
+
+            # Shard 3: project to vocab → next token
+            r = await client.post(
+                f"{SHARD_URLS[3]}/forward",
+                json={
+                    "hidden_states": data["hidden_states"],
+                    "seq_len": data["seq_len"],
+                    "temperature": 0.7,
+                },
+            )
+            r.raise_for_status()
+            next_token_id = r.json()["next_token_id"]
+
+            if next_token_id in _LLAMA_EOS_IDS:
+                break
+
+            generated_ids.append(next_token_id)
+
+            # Decode just the new token and yield it
+            dec = await client.post(
+                f"{SHARD_URLS[0]}/decode", json={"token_ids": [next_token_id]}
+            )
+            dec.raise_for_status()
+            yield dec.json()["text"]
+
+
 async def generate(
     system_prompt: str,
     user_message: str,
     stream: bool = True,
 ) -> str | AsyncIterator[str]:
-    """Generate a response, streaming or blocking."""
-    ollama_url = await get_available_ollama()
+    """Generate a response, routing to pipeline shards or Ollama."""
+    use_pipeline = INFERENCE_MODE == "pipeline" and await _check_shards()
 
+    if use_pipeline:
+        logger.info("Routing to pipeline shards")
+        if stream:
+            return stream_pipeline(system_prompt, user_message)
+        full = []
+        async for chunk in stream_pipeline(system_prompt, user_message):
+            full.append(chunk)
+        return "".join(full)
+
+    # Ollama fallback
+    logger.info("Routing to Ollama (%s)", MODEL_NAME)
+    ollama_url = await get_available_ollama()
     if stream:
         return stream_ollama(ollama_url, system_prompt, user_message)
-
-    # Blocking mode for history logging
-    full_response = []
+    full = []
     async for chunk in stream_ollama(ollama_url, system_prompt, user_message):
-        full_response.append(chunk)
-    return "".join(full_response)
+        full.append(chunk)
+    return "".join(full)
 
 
 # ---------------------------------------------------------------------------
