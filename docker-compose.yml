@@ -94,10 +94,11 @@ services:
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/hf-cache
+      - HF_HUB_OFFLINE=1
     volumes:
       - hf-cache:/hf-cache    # shared model cache - downloaded once
-    mem_limit: 3g
-    cpus: '1.0'
+    # no mem_limit: spikes to ~6GB during model init, drops to ~1.5GB steady state
+    cpus: '2.0'
 
   shard-1:
     image: pk-shard:v1
@@ -108,10 +109,10 @@ services:
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/hf-cache
+      - HF_HUB_OFFLINE=1
     volumes:
       - hf-cache:/hf-cache
-    mem_limit: 3g
-    cpus: '1.0'
+    cpus: '2.0'
     depends_on:
       - shard-0
 
@@ -124,10 +125,10 @@ services:
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/hf-cache
+      - HF_HUB_OFFLINE=1
     volumes:
       - hf-cache:/hf-cache
-    mem_limit: 3g
-    cpus: '1.0'
+    cpus: '2.0'
     depends_on:
       - shard-1
 
@@ -140,10 +141,10 @@ services:
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
       - HF_TOKEN=${HF_TOKEN}
       - HF_HOME=/hf-cache
+      - HF_HUB_OFFLINE=1
     volumes:
       - hf-cache:/hf-cache
-    mem_limit: 3g
-    cpus: '1.0'
+    cpus: '2.0'
     depends_on:
       - shard-2
 
