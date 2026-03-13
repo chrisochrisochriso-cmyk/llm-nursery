@@ -89,6 +89,7 @@ services:
     image: pk-shard:v1
     container_name: pk-shard-0
     restart: unless-stopped
+    init: true
     environment:
       - SHARD_ID=0
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
@@ -104,6 +105,7 @@ services:
     image: pk-shard:v1
     container_name: pk-shard-1
     restart: unless-stopped
+    init: true
     environment:
       - SHARD_ID=1
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
@@ -120,6 +122,7 @@ services:
     image: pk-shard:v1
     container_name: pk-shard-2
     restart: unless-stopped
+    init: true
     environment:
       - SHARD_ID=2
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
@@ -136,6 +139,7 @@ services:
     image: pk-shard:v1
     container_name: pk-shard-3
     restart: unless-stopped
+    init: true
     environment:
       - SHARD_ID=3
       - MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
