@@ -353,45 +353,32 @@ def profile(
 ):
     """View or edit your user profile (~/.pk/profile.yaml).
 
-    Switch between home network and Tailscale remote access:
+    Switch between local and remote access:
 
-      pk profile --cluster-ip 192.168.1.10    # on dad's WiFi
-      pk profile --cluster-ip 100.x.x.x       # from Wales via Tailscale
+      pk profile --cluster-ip 192.168.1.50    # GMKtec on LAN
     """
     current = load_profile()
 
     if name is None and coordinator_url is None and cluster_ip is None:
         # View mode
         url = current.get("coordinator_url", DEFAULT_COORDINATOR)
-        # Detect if currently using Tailscale IP
-        import re
-        is_tailscale = bool(re.match(r"http://100\.", url))
-        network_note = " [via Tailscale]" if is_tailscale else " [LAN]"
         console.print(Panel(
             f"Name:            {current.get('name', 'not set')}\n"
-            f"Coordinator URL: {url}{network_note}\n"
+            f"Coordinator URL: {url}\n"
             f"Profile path:    {PROFILE_PATH}\n\n"
-            "[dim]Switch network:  pk profile --cluster-ip <ip>[/dim]",
+            "[dim]Change server:  pk profile --cluster-ip <ip>[/dim]",
             title="paperknight AI - Profile",
         ))
         return
 
     # Update mode
     if name:
-        if name not in ("chriso", "johno", "default"):
-            console.print("[yellow]Note:[/yellow] name should be 'chriso' or 'johno' for tailored prompts")
         current["name"] = name
 
     if cluster_ip:
-        # Build coordinator URL from IP - works identically over LAN or Tailscale
-        # Strip protocol prefix if user accidentally included it
         ip = cluster_ip.replace("http://", "").replace("https://", "").split(":")[0]
         current["coordinator_url"] = f"http://{ip}:30800"
-        import re
-        if re.match(r"^100\.", ip):
-            console.print(f"[cyan]Tailscale mode:[/cyan] routing via {ip}")
-        else:
-            console.print(f"[cyan]LAN mode:[/cyan] routing via {ip}")
+        console.print(f"[cyan]Connecting to:[/cyan] {ip}")
 
     if coordinator_url:
         current["coordinator_url"] = coordinator_url

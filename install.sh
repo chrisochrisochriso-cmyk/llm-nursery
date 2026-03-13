@@ -1,11 +1,11 @@
 #!/bin/bash
 # paperknight AI - Installer
-# Single ZimaBoard (Ubuntu) + MacBook setup
+# GMKtec (Windows 11 + WSL2) or MacBook setup
 # No Kubernetes. Docker Compose only.
 #
 # Run this on:
-#   1. The ZimaBoard  - sets up Ollama, ChromaDB, Coordinator
-#   2. Your MacBook   - installs the pk CLI and points it at the ZimaBoard
+#   1. The GMKtec (via WSL2)  - sets up Ollama, ChromaDB, Coordinator
+#   2. Your MacBook           - installs the pk CLI and points it at the GMKtec
 
 set -euo pipefail
 
@@ -37,7 +37,7 @@ echo -e "${BOLD}╔════════════════════�
 echo -e "${BOLD}║      paperknight AI Installer     ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════╝${RESET}"
 echo ""
-echo "Private AI on your ZimaBoard. No cloud. No API costs."
+echo "Private AI on your GMKtec. No cloud. No API costs."
 echo "Llama 3.1 8B runs entirely on your hardware."
 echo ""
 
@@ -62,24 +62,15 @@ echo ""
 step "Step 1 of 4 - Quick setup"
 echo ""
 
-echo "What's your name?"
-echo "  1) chriso"
-echo "  2) johno"
-echo "  3) other"
-read -rp "Choose (1/2/3): " name_choice
-case "$name_choice" in
-    1) USER_NAME="chriso" ;;
-    2) USER_NAME="johno" ;;
-    *) read -rp "Enter your name: " USER_NAME ;;
-esac
-ok "Hello, $USER_NAME"
+USER_NAME="chriso"
+ok "Hello, chriso (dev mode)"
 echo ""
 
 OS=$(uname -s)
 
 echo "What is this machine?"
-echo "  1) ZimaBoard  - sets up the AI server (do this first)"
-echo "  2) MacBook / laptop  - installs pk CLI only"
+echo "  1) GMKtec (WSL2)  - sets up the AI server (do this first)"
+echo "  2) MacBook        - installs pk CLI only"
 read -rp "Choose (1/2): " role_choice
 
 case "$role_choice" in
@@ -88,19 +79,19 @@ case "$role_choice" in
             warn "macOS detected - switching to laptop mode"
             NODE_ROLE="client"
             IS_LAPTOP=true
-            read -rp "ZimaBoard LAN IP (e.g. 192.168.1.10): " CLUSTER_IP
+            read -rp "GMKtec LAN IP (e.g. 192.168.1.50): " CLUSTER_IP
         else
             NODE_ROLE="server"
             IS_LAPTOP=false
-            ok "ZimaBoard server setup"
+            ok "GMKtec server setup"
         fi
         ;;
     *)
         NODE_ROLE="client"
         IS_LAPTOP=true
         echo ""
-        read -rp "ZimaBoard LAN IP (e.g. 192.168.1.10): " CLUSTER_IP
-        ok "Laptop setup - connecting to $CLUSTER_IP"
+        read -rp "GMKtec LAN IP (e.g. 192.168.1.50): " CLUSTER_IP
+        ok "MacBook setup - connecting to $CLUSTER_IP"
         ;;
 esac
 
@@ -171,7 +162,9 @@ if [[ "$IS_LAPTOP" == "false" ]]; then
         || die "Model pull failed - check network: docker compose logs ollama"
     ok "Llama 3.1 8B ready"
 
-    BOARD_IP=$(hostname -I | awk '{print $1}')
+    # On WSL2, get the Windows-visible IP
+    BOARD_IP=$(ip route show | grep -oP 'src \K[\d.]+' | head -1 2>/dev/null \
+        || hostname -I | awk '{print $1}')
 else
     ok "Laptop - skipping service setup"
 fi
@@ -225,18 +218,20 @@ echo -e "${BOLD}╚════════════════════�
 echo ""
 echo "Quick test:"
 echo "  pk status            - check everything is running"
-echo "  pk ask 'hello'       - test inference"
+echo "  pk ask 'hello'       - test inference (terminal)"
+echo "  Web UI:              - open browser to http://<gmktec-ip>:30800"
 echo ""
 
 if [[ "$IS_LAPTOP" == "false" ]]; then
-    echo -e "${YELLOW}  ZimaBoard IP: ${BOLD}${BOARD_IP:-unknown}${RESET}"
+    echo -e "${YELLOW}  GMKtec IP: ${BOLD}${BOARD_IP:-unknown}${RESET}"
+    echo ""
+    echo "  Open the health companion web UI:"
+    dim "http://${BOARD_IP:-<ip>}:30800"
     echo ""
     echo "  On your MacBook:"
-    dim "git clone https://github.com/chrisochrisochriso-cmyk/llm-nursery.git"
-    dim "cd llm-nursery && bash install.sh"
-    dim "→ Choose: MacBook, enter ZimaBoard IP: ${BOARD_IP:-<ip>}"
+    dim "bash install.sh  →  Choose: MacBook, enter GMKtec IP: ${BOARD_IP:-<ip>}"
     echo ""
-    echo "  To manage services on this ZimaBoard:"
+    echo "  To manage services on this GMKtec:"
     dim "docker compose ps             - check status"
     dim "docker compose logs -f        - view logs"
     dim "docker compose restart        - restart all"

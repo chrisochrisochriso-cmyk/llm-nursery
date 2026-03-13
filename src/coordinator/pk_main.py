@@ -27,7 +27,7 @@ from typing import AsyncIterator, Optional
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -64,16 +64,21 @@ SYSTEM_PROMPTS = {
         "Flag CRITICAL security issues immediately with severity. "
         "All code and context shared with you is sensitive security research."
     ),
-    "johno": (
-        "You are a helpful senior software engineer assistant for Johno. "
-        "Focus on code correctness, clarity, and best practices. "
-        "Explain things clearly. Be friendly and practical. "
-        "Homelab and operations context. "
-        "Flag any security issues you notice."
+    "health": (
+        "You are a friendly health companion assistant. "
+        "Your two jobs are: (1) help the user log and track their symptoms clearly and kindly, "
+        "and (2) translate medical documents, doctor's notes, and clinical jargon into plain, "
+        "easy-to-understand English that anyone can follow. "
+        "Always be warm, clear, and reassuring. Never diagnose or prescribe — if something sounds "
+        "serious, gently encourage them to speak with their doctor. "
+        "When logging symptoms, ask follow-up questions to get useful detail: when did it start, "
+        "how severe, any changes, what makes it better or worse. "
+        "When translating medical text, explain every term in plain language and summarise what "
+        "the document is telling the patient in simple bullet points."
     ),
     "default": (
-        "You are paperknight AI, a private AI assistant for paperknight Threat Labs. "
-        "Be direct and technical. Flag security issues explicitly."
+        "You are paperknight AI, a private AI assistant. "
+        "Be helpful, clear, and direct."
     ),
 }
 
@@ -343,6 +348,321 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="paperknight AI Coordinator", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Web UI
+# ---------------------------------------------------------------------------
+
+WEB_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PaperKnight Health Companion</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f4f8;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .container {
+    width: 100%;
+    max-width: 720px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    box-shadow: 0 2px 24px rgba(0,0,0,0.08);
+  }
+  .header {
+    padding: 18px 24px;
+    background: #1a6fa8;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .header h1 { font-size: 1.2rem; font-weight: 600; }
+  .header .sub { font-size: 0.8rem; opacity: 0.8; margin-top: 2px; }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #4ade80; flex-shrink: 0;
+  }
+  .status-dot.offline { background: #f87171; }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.55;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: #1a6fa8;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: #f0f4f8;
+    color: #1a202c;
+    border-bottom-left-radius: 4px;
+  }
+  .bubble.thinking {
+    align-self: flex-start;
+    background: #f0f4f8;
+    color: #718096;
+    font-style: italic;
+    font-size: 0.88rem;
+  }
+  .input-bar {
+    padding: 16px 24px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  textarea {
+    flex: 1;
+    border: 1.5px solid #cbd5e0;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    resize: none;
+    min-height: 44px;
+    max-height: 120px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  textarea:focus { border-color: #1a6fa8; }
+  button {
+    border: none;
+    border-radius: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: background 0.2s, transform 0.1s;
+  }
+  button:active { transform: scale(0.95); }
+  #sendBtn {
+    background: #1a6fa8;
+    color: #fff;
+    min-width: 48px;
+  }
+  #sendBtn:hover { background: #155d8f; }
+  #sendBtn:disabled { background: #a0aec0; cursor: not-allowed; }
+  #voiceBtn {
+    background: #f0f4f8;
+    color: #4a5568;
+    min-width: 48px;
+  }
+  #voiceBtn:hover { background: #e2e8f0; }
+  #voiceBtn.recording { background: #fed7d7; color: #c53030; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+  .speak-btn {
+    background: none;
+    border: none;
+    font-size: 0.8rem;
+    color: #a0aec0;
+    cursor: pointer;
+    padding: 2px 6px;
+    margin-top: 4px;
+  }
+  .speak-btn:hover { color: #1a6fa8; }
+  .no-voice { font-size: 0.75rem; color: #a0aec0; text-align: center; padding: 4px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="status-dot" id="statusDot"></div>
+    <div>
+      <h1>PaperKnight Health Companion</h1>
+      <div class="sub">Private AI &bull; Your information stays on your device</div>
+    </div>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="bubble assistant">
+      Hello! I'm your health companion. I can help you log and track your symptoms, or translate medical documents and doctor's notes into plain English.<br><br>
+      What would you like to do today?
+    </div>
+  </div>
+
+  <div class="input-bar">
+    <textarea id="input" placeholder="Type your message, or use the mic..." rows="1"
+      onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+    <button id="voiceBtn" title="Hold to speak" onclick="toggleVoice()">🎤</button>
+    <button id="sendBtn" onclick="send()">➤</button>
+  </div>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const inputEl    = document.getElementById('input');
+const sendBtn    = document.getElementById('sendBtn');
+const voiceBtn   = document.getElementById('voiceBtn');
+const statusDot  = document.getElementById('statusDot');
+
+let speaking = false;
+let recognition = null;
+let synth = window.speechSynthesis;
+
+// Check status on load
+fetch('/health').then(r => {
+  statusDot.classList.toggle('offline', !r.ok);
+}).catch(() => statusDot.classList.add('offline'));
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+}
+
+function scrollBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = 'bubble ' + role;
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function speak(text) {
+  if (!synth) return;
+  synth.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate = 0.95;
+  utt.pitch = 1;
+  synth.speak(utt);
+}
+
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  addBubble('user', text);
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  sendBtn.disabled = true;
+
+  const thinking = addBubble('thinking', 'Thinking...');
+
+  try {
+    const resp = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, profile: 'health', stream: true }),
+    });
+
+    thinking.remove();
+
+    if (!resp.ok) { addBubble('assistant', 'Sorry, something went wrong. Please try again.'); return; }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    const bubble = addBubble('assistant', '');
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      fullText += chunk;
+      bubble.textContent = fullText;
+      scrollBottom();
+    }
+
+    // Speak the response
+    speak(fullText);
+
+    // Add small speak-again button
+    const speakBtn = document.createElement('button');
+    speakBtn.className = 'speak-btn';
+    speakBtn.textContent = '🔊 Read aloud';
+    speakBtn.onclick = () => speak(fullText);
+    bubble.appendChild(speakBtn);
+
+  } catch (e) {
+    thinking.remove();
+    addBubble('assistant', 'Connection error. Is PaperKnight running?');
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+// Voice input
+function toggleVoice() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Voice input is not supported in this browser. Try Chrome or Edge.');
+    return;
+  }
+
+  if (speaking) {
+    recognition && recognition.stop();
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-GB';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    speaking = true;
+    voiceBtn.classList.add('recording');
+    voiceBtn.textContent = '⏹';
+  };
+  recognition.onresult = (e) => {
+    inputEl.value = e.results[0][0].transcript;
+    autoResize(inputEl);
+    send();
+  };
+  recognition.onerror = () => {};
+  recognition.onend = () => {
+    speaking = false;
+    voiceBtn.classList.remove('recording');
+    voiceBtn.textContent = '🎤';
+  };
+
+  recognition.start();
+}
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def web_ui():
+    """Serve the health companion web UI."""
+    return WEB_UI_HTML
 
 
 # ---------------------------------------------------------------------------
