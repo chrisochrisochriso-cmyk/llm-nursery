@@ -155,7 +155,7 @@ def ask(
     profile = get_profile_name()
 
     try:
-        with httpx.Client(timeout=600.0) as client:
+        with httpx.Client(timeout=600.0, verify=False) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/ask",
@@ -204,7 +204,7 @@ def review(
         console.print(f"[dim]Reviewing: {filename}[/dim]")
 
     try:
-        with httpx.Client(timeout=600.0) as client:
+        with httpx.Client(timeout=600.0, verify=False) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/review",
@@ -253,7 +253,7 @@ def scan(
         console.print(f"[dim]Scanning: {filename}[/dim]")
 
     try:
-        with httpx.Client(timeout=600.0) as client:
+        with httpx.Client(timeout=600.0, verify=False) as client:
             with client.stream(
                 "POST",
                 f"{coordinator}/scan",
@@ -284,7 +284,7 @@ def status(
     username = profile.get("name", "unknown")
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, verify=False) as client:
             resp = client.get(f"{coordinator}/status")
             if resp.status_code != 200:
                 print_error(f"Coordinator returned {resp.status_code}")

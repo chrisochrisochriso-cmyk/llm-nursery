@@ -32,3 +32,6 @@ Thumbs.db
 # Temp files
 *.tmp
 *.log
+
+# TLS certs - never commit private keys
+certs/

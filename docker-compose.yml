@@ -63,6 +63,7 @@ services:
       - CHROMADB_URL=http://chromadb:8000
       - MODEL_NAME=llama3.1:8b
     volumes:
+      - ./certs:/certs:ro        # TLS cert + key for HTTPS
       - history-data:/storage/history
     mem_limit: 512m
     depends_on:

@@ -26,5 +26,7 @@ COPY pk_main.py .
 
 EXPOSE 8000
 
-# 2 workers - ZimaBoard has 4 cores, coordinator is mostly I/O-bound
-CMD ["uvicorn", "pk_main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--log-level", "info"]
+# 2 workers - coordinator is mostly I/O-bound
+CMD ["uvicorn", "pk_main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--ssl-keyfile", "/certs/key.pem", "--ssl-certfile", "/certs/cert.pem", \
+     "--workers", "2", "--log-level", "info"]
