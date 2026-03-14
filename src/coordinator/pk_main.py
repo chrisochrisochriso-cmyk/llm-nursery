@@ -937,7 +937,8 @@ async def ask(req: InferRequest):
     now = datetime.now()
     time_context = (
         f"Current date: {now.strftime('%A %d %B %Y')}. "
-        f"Current time: {now.strftime('%H:%M')}."
+        f"Current time: {now.strftime('%H:%M')}. "
+        f"If the user asks what time or date it is, answer using these values directly."
     )
     system_prompt = f"{system_prompt}\n\n{time_context}"
 
@@ -947,10 +948,20 @@ async def ask(req: InferRequest):
         system_prompt = f"{system_prompt}\n\n{rag_context}"
         logger.info("RAG context injected (%d chars)", len(rag_context))
 
+    # For time/date questions, prepend the answer hint directly to the user message
+    # so smaller models (3b) can't ignore it
+    user_message = req.message
+    _time_keywords = {"time", "date", "day", "today", "clock", "hour", "minute"}
+    if any(kw in req.message.lower() for kw in _time_keywords):
+        user_message = (
+            f"[Context: it is {now.strftime('%H:%M')} on {now.strftime('%A %d %B %Y')}]\n"
+            f"{req.message}"
+        )
+
     if req.stream:
         async def response_stream():
             chunks = []
-            async for chunk in await generate(system_prompt, req.message, stream=True, num_predict=768):
+            async for chunk in await generate(system_prompt, user_message, stream=True, num_predict=768):
                 chunks.append(chunk)
                 yield chunk
             # Log after streaming completes
@@ -962,7 +973,7 @@ async def ask(req: InferRequest):
 
         return StreamingResponse(response_stream(), media_type="text/plain")
 
-    response = await generate(system_prompt, req.message, stream=False)
+    response = await generate(system_prompt, user_message, stream=False)
     log_history(req.profile, "ask", req.message, response)
     return {"response": response}
 
