@@ -12,7 +12,8 @@ async def test():
                 "language": "en_GB",
                 "speaker": None
             }
-        }
+        },
+        "payload_length": 0
     }
     w.write((json.dumps(event) + "\n").encode())
     await w.drain()

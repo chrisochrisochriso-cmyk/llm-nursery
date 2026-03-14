@@ -1029,6 +1029,7 @@ async def _wyoming_tts(text: str) -> bytes:
                 "text": text,
                 "voice": {"name": PIPER_VOICE, "language": "en_GB", "speaker": None},
             },
+            "payload_length": 0,
         }
         writer.write((json.dumps(event) + "\n").encode())
         await writer.drain()
