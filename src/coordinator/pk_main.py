@@ -1041,7 +1041,7 @@ async def _wyoming_tts(text: str) -> bytes:
             line = await asyncio.wait_for(reader.readline(), timeout=30.0)
             if not line:
                 break
-            msg = json.loads(line.decode().strip())
+            msg = json.loads(line.rstrip(b"\n"))
             payload_length = msg.get("payload_length", 0)
             payload = await reader.readexactly(payload_length) if payload_length > 0 else b""
 
