@@ -113,15 +113,12 @@ SCAN_SUFFIX = (
 # ---------------------------------------------------------------------------
 
 async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts using shard-0 hidden states, or local all-MiniLM fallback.
-    Skips shard attempt entirely when INFERENCE_MODE=ollama (shards not running).
+    """Embed texts using shard-0 hidden states (high quality).
+    Falls back to local all-MiniLM if shard-0 is unavailable.
+    Short timeout (3s) so fallback is fast when shard-0 is off.
     """
-    # Fast path: shards not in use, go straight to local embedder
-    if INFERENCE_MODE != "pipeline":
-        return await asyncio.to_thread(embed, texts)
-
     results = []
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=3.0) as client:
         for text in texts:
             try:
                 r = await client.post(
@@ -134,8 +131,7 @@ async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
                 arr = np.frombuffer(raw, dtype=np.float16).reshape(hs["shape"])
                 vec = arr[0].mean(axis=0).astype(np.float32)
                 results.append(vec.tolist())
-            except Exception as e:
-                logger.warning("Shard embed failed, falling back to local: %s", e)
+            except Exception:
                 fallback = await asyncio.to_thread(embed, [text])
                 results.append(fallback[0])
     return results
