@@ -205,6 +205,7 @@ async def stream_ollama(
     ollama_url: str,
     system_prompt: str,
     user_message: str,
+    num_predict: int = 512,
 ) -> AsyncIterator[str]:
     """Stream response from Ollama, yielding chunks as they arrive."""
     payload = {
@@ -216,7 +217,8 @@ async def stream_ollama(
         "stream": True,
         "options": {
             "temperature": 0.7,
-            "num_predict": 2048,
+            "num_predict": num_predict,
+            "num_ctx": 4096,
         },
     }
 
@@ -329,6 +331,7 @@ async def generate(
     system_prompt: str,
     user_message: str,
     stream: bool = True,
+    num_predict: int = 512,
 ) -> str | AsyncIterator[str]:
     """Generate a response, routing to pipeline shards or Ollama."""
     use_pipeline = INFERENCE_MODE == "pipeline" and await _check_shards()
@@ -346,9 +349,9 @@ async def generate(
     logger.info("Routing to Ollama (%s)", MODEL_NAME)
     ollama_url = await get_available_ollama()
     if stream:
-        return stream_ollama(ollama_url, system_prompt, user_message)
+        return stream_ollama(ollama_url, system_prompt, user_message, num_predict=num_predict)
     full = []
-    async for chunk in stream_ollama(ollama_url, system_prompt, user_message):
+    async for chunk in stream_ollama(ollama_url, system_prompt, user_message, num_predict=num_predict):
         full.append(chunk)
     return "".join(full)
 
@@ -962,12 +965,12 @@ async def review(req: ReviewRequest):
 
     if req.stream:
         async def response_stream():
-            async for chunk in await generate(system_prompt, message, stream=True):
+            async for chunk in await generate(system_prompt, message, stream=True, num_predict=1024):
                 yield chunk
 
         return StreamingResponse(response_stream(), media_type="text/plain")
 
-    response = await generate(system_prompt, message, stream=False)
+    response = await generate(system_prompt, message, stream=False, num_predict=1024)
     return {"response": response}
 
 
@@ -985,12 +988,12 @@ async def scan(req: ScanRequest):
 
     if req.stream:
         async def response_stream():
-            async for chunk in await generate(system_prompt, message, stream=True):
+            async for chunk in await generate(system_prompt, message, stream=True, num_predict=1024):
                 yield chunk
 
         return StreamingResponse(response_stream(), media_type="text/plain")
 
-    response = await generate(system_prompt, message, stream=False)
+    response = await generate(system_prompt, message, stream=False, num_predict=1024)
     return {"response": response}
 
 
