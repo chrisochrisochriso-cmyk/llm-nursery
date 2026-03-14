@@ -722,20 +722,22 @@ async function send() {
       body: JSON.stringify({ message: text, profile: 'health', stream: true }),
     });
 
-    thinking.remove();
-
-    if (!resp.ok) { addBubble('assistant', 'Sorry, something went wrong. Please try again.'); return; }
+    if (!resp.ok) { thinking.remove(); addBubble('assistant', 'Sorry, something went wrong. Please try again.'); return; }
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    const bubble = addBubble('assistant', '');
     let fullText = '';
+    let bubble = null;
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, { stream: true });
       fullText += chunk;
+      if (!bubble) {
+        thinking.remove();
+        bubble = addBubble('assistant', '');
+      }
       bubble.textContent = fullText;
       scrollBottom();
     }
