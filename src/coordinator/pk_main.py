@@ -212,7 +212,6 @@ async def stream_ollama(
         "options": {
             "temperature": 0.7,
             "num_predict": num_predict,
-            "num_ctx": 4096,
         },
     }
 
