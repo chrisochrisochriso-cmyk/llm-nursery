@@ -13,9 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pk_requirements.txt .
-# Install CPU-only torch first so sentence-transformers doesn't pull CUDA (~4GB)
-RUN pip install --no-cache-dir --timeout 300 torch --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir -r pk_requirements.txt
+RUN pip install --no-cache-dir --timeout 300 -r pk_requirements.txt
 
 # Pre-download the embedding model at build time so first startup is fast
 # Model: all-MiniLM-L6-v2, ~90MB, used for RAG document embedding
