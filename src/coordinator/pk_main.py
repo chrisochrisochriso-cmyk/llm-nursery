@@ -15,10 +15,12 @@ No secrets required. No external API calls. Zero cloud.
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import wave
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1013,24 +1015,68 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
     return {"transcript": transcript}
 
 
+async def _wyoming_tts(text: str) -> bytes:
+    """Call Piper via Wyoming TCP protocol, return WAV bytes."""
+    # Extract host from PIPER_URL (e.g. http://piper:10200 → piper)
+    host = PIPER_URL.replace("http://", "").replace("https://", "").split(":")[0]
+    port = 10200
+
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        event = {
+            "type": "synthesize",
+            "data": {
+                "text": text,
+                "voice": {"name": PIPER_VOICE, "language": "en_GB", "speaker": None},
+            },
+        }
+        writer.write((json.dumps(event) + "\n").encode())
+        await writer.drain()
+
+        audio_data = b""
+        rate, width, channels = 22050, 2, 1
+
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=30.0)
+            if not line:
+                break
+            msg = json.loads(line.decode().strip())
+            payload_length = msg.get("payload_length", 0)
+            payload = await reader.readexactly(payload_length) if payload_length > 0 else b""
+
+            if msg["type"] == "audio-start":
+                d = msg.get("data", {})
+                rate, width, channels = d.get("rate", 22050), d.get("width", 2), d.get("channels", 1)
+            elif msg["type"] == "audio-chunk":
+                audio_data += payload
+            elif msg["type"] == "audio-stop":
+                break
+
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(width)
+        wf.setframerate(rate)
+        wf.writeframes(audio_data)
+    return buf.getvalue()
+
+
 @app.post("/tts")
 async def tts(req: TtsRequest) -> Response:
-    """Convert text to speech via local Piper, return WAV audio."""
+    """Convert text to speech via local Piper (Wyoming protocol), return WAV audio."""
     text = req.text.strip()[:2000]
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            resp = await client.post(
-                f"{PIPER_URL}/api/tts",
-                json={"text": text, "voice": PIPER_VOICE},
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"Piper unavailable: {e}")
-
-    return Response(content=resp.content, media_type="audio/wav")
+    try:
+        wav_bytes = await _wyoming_tts(text)
+    except Exception as e:
+        logger.warning("Piper TTS failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Piper unavailable: {e}")
+    return Response(content=wav_bytes, media_type="audio/wav")
 
 
 @app.get("/status")
