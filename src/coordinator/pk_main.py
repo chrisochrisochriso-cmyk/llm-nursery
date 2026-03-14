@@ -471,7 +471,7 @@ async def lifespan(app: FastAPI):
     HISTORY_PATH.mkdir(parents=True, exist_ok=True)
     # Pre-load embedding model so first add doesn't pause inference
     await asyncio.to_thread(get_embedder)
-    await ensure_collection()
+    await asyncio.to_thread(get_chroma_collection)
     # Warm up the LLM so first request is instant
     asyncio.create_task(warmup_model())
     # Keep model hot in RAM between requests
