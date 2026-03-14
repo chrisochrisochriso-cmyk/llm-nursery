@@ -57,7 +57,7 @@ def chat_command(
 
     # Verify coordinator is reachable before starting
     try:
-        with httpx.Client(timeout=5.0) as client:
+        with httpx.Client(timeout=5.0, verify=False) as client:
             r = client.get(f"{coordinator}/health")
             if r.status_code != 200:
                 err_console.print(f"[red]Coordinator unhealthy: {r.status_code}[/red]")
@@ -107,7 +107,7 @@ def chat_command(
         # Stream response
         try:
             full_response = []
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(timeout=180.0, verify=False) as client:
                 with client.stream(
                     "POST",
                     f"{coordinator}/ask",
@@ -154,7 +154,7 @@ def history_command(
     coordinator = get_coordinator_url()
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, verify=False) as client:
             resp = client.get(f"{coordinator}/history", params={"limit": limit})
             if resp.status_code != 200:
                 err_console.print(f"[red]Error {resp.status_code}[/red]")

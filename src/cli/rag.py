@@ -58,7 +58,7 @@ def add_command(
         if not quiet:
             console.print(f"[dim]Fetching {cve_id} from NVD...[/dim]")
         try:
-            with httpx.Client(timeout=20.0) as client:
+            with httpx.Client(timeout=20.0, verify=False) as client:
                 resp = client.post(f"{coordinator}/rag/add-cve", json={"cve_id": cve_id})
                 if resp.status_code != 200:
                     err_console.print(f"[red]ERROR:[/red] {resp.json().get('detail', resp.text)}")
@@ -83,7 +83,7 @@ def add_command(
         if not quiet:
             console.print(f"[dim]Fetching {url}...[/dim]")
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=30.0, verify=False) as client:
                 resp = client.post(f"{coordinator}/rag/add-url", json={"url": url})
                 if resp.status_code != 200:
                     err_console.print(f"[red]ERROR:[/red] {resp.json().get('detail', resp.text)}")
@@ -175,7 +175,7 @@ def _add_content(
 ) -> None:
     """POST content to coordinator /rag/add."""
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, verify=False) as client:
             resp = client.post(
                 f"{coordinator}/rag/add",
                 json={"content": content, "source": source, "doc_type": doc_type},
@@ -209,7 +209,7 @@ def search_command(
     coordinator = get_coordinator_url()
 
     try:
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=15.0, verify=False) as client:
             resp = client.get(
                 f"{coordinator}/rag/search",
                 params={"query": query, "n_results": n_results},
