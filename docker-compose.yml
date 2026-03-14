@@ -3,20 +3,23 @@
 #
 # Services:
 #   - shard-0       Qwen2.5-3B embeddings only (high quality RAG)
-#   - Ollama        Llama 3.2 3B generation, CPU only, port 11434
-#   - ChromaDB      RAG vector store, internal only
-#   - Coordinator   FastAPI bridge + RAG + web UI, port 30800
+#   - ollama        Llama 3.2 3B generation, CPU only, port 11434
+#   - chromadb      RAG vector store, internal only
+#   - coordinator   FastAPI bridge + RAG + web UI, port 30800
+#   - whisper       Local STT - openai/whisper medium, port 9000 (internal)
+#   - piper         Local TTS - en_GB-alan-medium, port 10200 (internal)
 #
 # Memory budget (GMKtec 16GB):
 #   shard-0:     1.5GB steady (6GB spike on init - starts first)
-#   Ollama:      2.5GB (llama3.2:3b Q4)
-#   Coordinator: 1GB
-#   ChromaDB:    256MB
+#   ollama:      2.5GB (llama3.2:3b Q4)
+#   coordinator: 1GB
+#   chromadb:    256MB
+#   whisper:     900MB (medium model)
+#   piper:       120MB
 #   OS+WSL2:     ~4GB
-#   Total:       ~9.3GB - fits comfortably in 13GB WSL2 allocation
+#   Total:       ~10.3GB - fits in 13GB WSL2 allocation
 #
-# Startup order: shard-0 → Ollama/ChromaDB → Coordinator
-# Use start-hybrid.sh for correct startup sequence
+# Startup order: shard-0 → Ollama/ChromaDB/Whisper/Piper → Coordinator
 #
 # Usage:
 #   docker compose up -d          start all
@@ -72,9 +75,6 @@ services:
       - MODEL_NAME=llama3.2:3b
       - INFERENCE_MODE=ollama
       - SHARD_0_URL=http://shard-0:8080
-      - SHARD_1_URL=http://shard-1:8080
-      - SHARD_2_URL=http://shard-2:8080
-      - SHARD_3_URL=http://shard-3:8080
       - WHISPER_URL=http://whisper:9000
       - PIPER_URL=http://piper:10200
       - PIPER_VOICE=en_GB-alan-medium
@@ -123,9 +123,9 @@ services:
     # Port 10200 internal only - coordinator calls http://piper:10200
 
   # ---------------------------------------------------------------------------
-  # Pipeline shards - Llama 3.2 3B split across 4 containers
-  # Start sequentially (each briefly uses ~6GB during model init)
-  # Steady state: ~1.5GB per shard
+  # shard-0: Qwen2.5-3B embeddings only
+  # Starts first - 6GB init spike clears before Ollama loads
+  # Steady state: ~1.5GB
   # ---------------------------------------------------------------------------
 
   # shard-0: embeddings only - starts first so 6GB init spike clears before Ollama loads

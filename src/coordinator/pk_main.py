@@ -647,6 +647,28 @@ WEB_UI_HTML = """<!DOCTYPE html>
   }
   .speak-btn:hover { color: #1a6fa8; }
   .no-voice { font-size: 0.75rem; color: #a0aec0; text-align: center; padding: 4px 0; }
+  .upload-bar {
+    padding: 10px 24px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .upload-bar label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #4a5568;
+    cursor: pointer;
+    padding: 6px 12px;
+    border: 1.5px dashed #cbd5e0;
+    border-radius: 8px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .upload-bar label:hover { border-color: #1a6fa8; background: #f0f4f8; }
+  .upload-bar input[type=file] { display: none; }
+  #uploadStatus { font-size: 0.82rem; color: #718096; }
 </style>
 </head>
 <body>
@@ -664,6 +686,14 @@ WEB_UI_HTML = """<!DOCTYPE html>
       Hello! I'm your health companion. I can help you log and track your symptoms, or translate medical documents and doctor's notes into plain English.<br><br>
       What would you like to do today?
     </div>
+  </div>
+
+  <div class="upload-bar">
+    <label title="Upload a PDF, Word doc, or text file into the knowledge base">
+      📎 Add document
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx" onchange="uploadFile(this)">
+    </label>
+    <span id="uploadStatus"></span>
   </div>
 
   <div class="input-bar">
@@ -784,6 +814,34 @@ async function send() {
     sendBtn.disabled = false;
     inputEl.focus();
   }
+}
+
+// File upload to RAG knowledge base
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('uploadStatus');
+  status.textContent = `Uploading ${file.name}...`;
+
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+
+  try {
+    const resp = await fetch('/rag/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (resp.ok) {
+      status.textContent = `✓ ${file.name} added (${data.chunks} chunks)`;
+      addBubble('assistant', `I've added "${file.name}" to my knowledge base (${data.chunks} sections). You can now ask me questions about it.`);
+      speak(`I've added ${file.name} to my knowledge base. You can now ask me questions about it.`);
+    } else {
+      status.textContent = `✗ ${data.detail || 'Upload failed'}`;
+    }
+  } catch (e) {
+    status.textContent = '✗ Upload failed - is PaperKnight running?';
+  }
+
+  input.value = '';
+  setTimeout(() => { status.textContent = ''; }, 5000);
 }
 
 // Voice input - local Whisper STT (no cloud)
@@ -1116,6 +1174,41 @@ async def scan(req: ScanRequest):
 # ---------------------------------------------------------------------------
 # RAG ingestion endpoints
 # ---------------------------------------------------------------------------
+
+@app.post("/rag/upload")
+async def rag_upload(file: UploadFile = File(...)) -> dict:
+    """Upload a file (PDF, text, markdown) directly from the web UI into RAG."""
+    filename = file.filename or "upload"
+    raw = await file.read()
+
+    ext = Path(filename).suffix.lower()
+
+    if ext == ".pdf":
+        try:
+            import pypdf, io
+            reader = pypdf.PdfReader(io.BytesIO(raw))
+            content = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF read failed: {e}")
+    else:
+        try:
+            content = raw.decode("utf-8", errors="replace")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"File read failed: {e}")
+
+    if len(content.strip()) < 50:
+        raise HTTPException(status_code=400, detail="File content too short to be useful")
+
+    chunks = chunk_text(content)
+    base_id = hashlib.sha256(f"{filename}:{content[:200]}".encode()).hexdigest()[:16]
+    ids = [f"{base_id}_{i}" for i in range(len(chunks))]
+    doc_type = "text" if ext in {".pdf", ".md", ".txt"} else "code"
+    metadatas = [{"source": filename, "type": doc_type, "chunk": i} for i in range(len(chunks))]
+
+    count = await add_to_chroma(chunks, metadatas, ids)
+    logger.info("RAG upload: %s (%d chunks)", filename, count)
+    return {"added": count, "source": filename, "chunks": len(chunks)}
+
 
 @app.post("/rag/add")
 async def rag_add(req: AddDocRequest) -> dict:

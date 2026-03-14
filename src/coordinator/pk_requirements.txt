@@ -10,5 +10,7 @@ sentence-transformers==3.3.1
 chromadb==0.5.23
 # URL fetching for pk add --url
 beautifulsoup4==4.12.3
-# Multipart file upload support (required for /transcribe audio upload)
+# Multipart file upload support (required for /transcribe and /rag/upload)
 python-multipart==0.0.9
+# PDF text extraction for file upload
+pypdf==4.3.1
