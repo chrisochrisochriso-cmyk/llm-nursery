@@ -42,7 +42,7 @@ services:
     cpus: '4.0'
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.23
     container_name: pk-chromadb
     restart: unless-stopped
     volumes:
