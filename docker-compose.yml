@@ -72,6 +72,9 @@ services:
     volumes:
       - ./certs:/certs:ro
       - history-data:/storage/history
+    command: ["uvicorn", "pk_main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--ssl-keyfile", "/certs/key.pem", "--ssl-certfile", "/certs/cert.pem",
+              "--log-level", "info"]
     mem_limit: 512m
     depends_on:
       - ollama
