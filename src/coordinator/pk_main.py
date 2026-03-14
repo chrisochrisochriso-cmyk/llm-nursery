@@ -166,14 +166,22 @@ async def query_rag(query: str) -> Optional[str]:
         ]
 
         if not relevant:
-            return None
+            return (
+                "No verified NHS information was found for this query in the knowledge base. "
+                "Answer helpfully using your general knowledge, but make clear you are not "
+                "citing NHS sources. Suggest the user visits nhs.uk or calls 111 for verified advice."
+            )
 
-        context_parts = ["[CONTEXT FROM KNOWLEDGE BASE]"]
+        context_parts = [
+            "The following is verified NHS information retrieved from the knowledge base. "
+            "You MUST base your answer on this information. Do not add facts not present here. "
+            "You may cite the source URLs provided."
+        ]
         for doc, meta, _ in relevant:
             source = meta.get("source", "unknown") if meta else "unknown"
-            context_parts.append(f"Source: {source}\n{doc}")
+            context_parts.append(f"[NHS SOURCE: {source}]\n{doc}")
 
-        return "\n\n".join(context_parts) + "\n[END CONTEXT]"
+        return "\n\n".join(context_parts)
 
     except Exception as e:
         logger.warning("RAG query failed: %s", e)
