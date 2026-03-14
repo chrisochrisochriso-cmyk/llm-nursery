@@ -204,7 +204,7 @@ mkdir -p "$HOME/.pk"
 CLUSTER_URL="${CLUSTER_IP:-localhost}"
 cat > "$HOME/.pk/profile.yaml" << PROFILE
 name: $USER_NAME
-coordinator_url: http://$CLUSTER_URL:30800
+coordinator_url: https://$CLUSTER_URL:30800
 PROFILE
 ok "Profile saved: ~/.pk/profile.yaml"
 

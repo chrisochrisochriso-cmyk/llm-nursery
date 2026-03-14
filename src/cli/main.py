@@ -50,7 +50,7 @@ err_console = Console(stderr=True)
 # Config
 # ---------------------------------------------------------------------------
 PROFILE_PATH = Path.home() / ".pk" / "profile.yaml"
-DEFAULT_COORDINATOR = "http://localhost:30800"  # NodePort default
+DEFAULT_COORDINATOR = "https://localhost:30800"
 
 
 def load_profile() -> dict:
@@ -377,7 +377,7 @@ def profile(
 
     if cluster_ip:
         ip = cluster_ip.replace("http://", "").replace("https://", "").split(":")[0]
-        current["coordinator_url"] = f"http://{ip}:30800"
+        current["coordinator_url"] = f"https://{ip}:30800"
         console.print(f"[cyan]Connecting to:[/cyan] {ip}")
 
     if coordinator_url:

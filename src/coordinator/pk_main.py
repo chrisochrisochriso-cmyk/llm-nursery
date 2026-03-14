@@ -132,7 +132,8 @@ async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
                 results.append(vec.tolist())
             except Exception as e:
                 logger.warning("Shard embed failed, falling back to local: %s", e)
-                results.append(await asyncio.to_thread(embed, [text])[0])
+                fallback = await asyncio.to_thread(embed, [text])
+                results.append(fallback[0])
     return results
 
 
