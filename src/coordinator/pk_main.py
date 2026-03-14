@@ -232,7 +232,7 @@ async def _check_shards() -> bool:
 async def stream_pipeline(
     system_prompt: str,
     user_message: str,
-    max_new_tokens: int = 512,
+    max_new_tokens: int = 64,
 ) -> AsyncIterator[str]:
     """Stream tokens through the 4-shard pipeline."""
     prompt = _llama_chat_prompt(system_prompt, user_message)
