@@ -18,10 +18,9 @@ async def test():
     w.write((json.dumps(event) + "\n").encode())
     await w.drain()
     print("sent, waiting...")
-    # Read raw bytes to understand actual protocol format
     raw = await asyncio.wait_for(r.read(4096), timeout=10.0)
-    print("raw bytes (first 300):", raw[:300])
-    print("repr:", repr(raw[:300]))
+    print("hex:", raw[:500].hex())
+    print("repr:", repr(raw[:500]))
     w.close()
 
 asyncio.run(test())
