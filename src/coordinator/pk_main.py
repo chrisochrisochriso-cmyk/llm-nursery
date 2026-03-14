@@ -1115,7 +1115,7 @@ async def rag_search(query: str, n_results: int = 5) -> dict:
             "source": meta.get("source", "unknown") if meta else "unknown",
             "type": meta.get("type", "unknown") if meta else "unknown",
             "distance": round(dist, 4),
-            "excerpt": doc[:300] + ("..." if len(doc) > 300 else ""),
+            "excerpt": doc[:doc.rfind(".", 0, 300) + 1] if len(doc) > 300 and "." in doc[:300] else doc[:300],
         })
 
     return {"query": query, "results": results}
