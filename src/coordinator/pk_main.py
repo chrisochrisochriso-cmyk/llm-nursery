@@ -1037,20 +1037,25 @@ async def _wyoming_tts(text: str) -> bytes:
         audio_data = b""
         rate, width, channels = 22050, 2, 1
 
-        while True:
-            line = await asyncio.wait_for(reader.readline(), timeout=30.0)
-            if not line:
-                break
-            msg = json.loads(line.rstrip(b"\n"))
-            payload_length = msg.get("payload_length", 0)
+        async def _read_wyoming_event():
+            header_line = await asyncio.wait_for(reader.readline(), timeout=30.0)
+            header = json.loads(header_line.rstrip(b"\n"))
+            data_length = header.get("data_length", 0)
+            payload_length = header.get("payload_length", 0)
+            data = json.loads(await reader.readexactly(data_length)) if data_length > 0 else {}
             payload = await reader.readexactly(payload_length) if payload_length > 0 else b""
+            return header, data, payload
 
-            if msg["type"] == "audio-start":
-                d = msg.get("data", {})
-                rate, width, channels = d.get("rate", 22050), d.get("width", 2), d.get("channels", 1)
-            elif msg["type"] == "audio-chunk":
+        while True:
+            header, data, payload = await _read_wyoming_event()
+            event_type = header.get("type", "")
+            if event_type == "audio-start":
+                rate = data.get("rate", 22050)
+                width = data.get("width", 2)
+                channels = data.get("channels", 1)
+            elif event_type == "audio-chunk":
                 audio_data += payload
-            elif msg["type"] == "audio-stop":
+            elif event_type == "audio-stop":
                 break
 
     finally:
