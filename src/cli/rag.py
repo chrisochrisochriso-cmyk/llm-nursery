@@ -162,7 +162,8 @@ def _add_file(coordinator: str, filepath: Path, quiet: bool, json_output: bool) 
             console.print(f"[yellow]Skipping[/yellow] {filepath} (too short)")
         return
 
-    _add_content(coordinator, content, str(filepath), "code", quiet, json_output)
+    doc_type = "text" if filepath.suffix.lower() in {".md", ".txt", ".log"} else "code"
+    _add_content(coordinator, content, str(filepath), doc_type, quiet, json_output)
 
 
 def _add_content(
