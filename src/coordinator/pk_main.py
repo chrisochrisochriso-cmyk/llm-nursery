@@ -26,6 +26,7 @@ from typing import AsyncIterator, Optional
 
 import base64
 
+import chromadb
 import httpx
 import numpy as np
 from bs4 import BeautifulSoup
@@ -63,6 +64,7 @@ _LLAMA_EOS_IDS = {151645, 151643}  # <|im_end|> and <|endoftext|>
 # Embedding model - loaded once at startup, stays in memory (~200MB)
 _embedder: Optional[SentenceTransformer] = None
 CHROMA_COLLECTION = "paperknight"
+_chroma_collection = None
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
@@ -141,44 +143,36 @@ async def query_rag(query: str) -> Optional[str]:
     """Query ChromaDB for relevant documents. Returns injected context string or None."""
     try:
         embeddings = await shard_embed_texts([query])
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            payload = {
-                "query_embeddings": embeddings,
-                "n_results": RAG_TOP_K,
-                "include": ["documents", "metadatas", "distances"],
-            }
-            resp = await client.post(
-                f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}/query",
-                json=payload,
-            )
-            if resp.status_code != 200:
-                return None
+        collection = await asyncio.to_thread(get_chroma_collection)
+        result = await asyncio.to_thread(
+            collection.query,
+            query_embeddings=embeddings,
+            n_results=RAG_TOP_K,
+            include=["documents", "metadatas", "distances"],
+        )
 
-            data = resp.json()
-            documents = data.get("documents", [[]])[0]
-            metadatas = data.get("metadatas", [[]])[0]
-            distances = data.get("distances", [[]])[0]
+        documents = result.get("documents", [[]])[0]
+        metadatas = result.get("metadatas", [[]])[0]
+        distances = result.get("distances", [[]])[0]
 
-            if not documents:
-                return None
+        if not documents:
+            return None
 
-            # Only inject context that's actually relevant (distance threshold)
-            relevant = [
-                (doc, meta, dist)
-                for doc, meta, dist in zip(documents, metadatas, distances)
-                if dist < 1.5  # cosine distance threshold
-            ]
+        relevant = [
+            (doc, meta, dist)
+            for doc, meta, dist in zip(documents, metadatas, distances)
+            if dist < 1.5
+        ]
 
-            if not relevant:
-                return None
+        if not relevant:
+            return None
 
-            # Build context block
-            context_parts = ["[CONTEXT FROM KNOWLEDGE BASE]"]
-            for doc, meta, _ in relevant:
-                source = meta.get("source", "unknown") if meta else "unknown"
-                context_parts.append(f"Source: {source}\n{doc}")
+        context_parts = ["[CONTEXT FROM KNOWLEDGE BASE]"]
+        for doc, meta, _ in relevant:
+            source = meta.get("source", "unknown") if meta else "unknown"
+            context_parts.append(f"Source: {source}\n{doc}")
 
-            return "\n\n".join(context_parts) + "\n[END CONTEXT]"
+        return "\n\n".join(context_parts) + "\n[END CONTEXT]"
 
     except Exception as e:
         logger.warning("RAG query failed: %s", e)
@@ -395,21 +389,20 @@ def embed(texts: list[str]) -> list[list[float]]:
     return get_embedder().encode(texts, show_progress_bar=False).tolist()
 
 
-async def ensure_collection() -> None:
-    """Create the ChromaDB collection if it doesn't exist."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}")
-            if r.status_code == 200:
-                return
-            # Create it
-            await client.post(
-                f"{CHROMADB_URL}/api/v1/collections",
-                json={"name": CHROMA_COLLECTION, "metadata": {"hnsw:space": "cosine"}},
-            )
-            logger.info("Created ChromaDB collection: %s", CHROMA_COLLECTION)
-    except Exception as e:
-        logger.warning("ChromaDB collection setup failed: %s", e)
+def get_chroma_collection():
+    """Get or create the ChromaDB collection using the Python client."""
+    global _chroma_collection
+    if _chroma_collection is not None:
+        return _chroma_collection
+    host = CHROMADB_URL.replace("http://", "").replace("https://", "").split(":")[0]
+    port = int(CHROMADB_URL.split(":")[-1]) if ":" in CHROMADB_URL else 8000
+    client = chromadb.HttpClient(host=host, port=port)
+    _chroma_collection = client.get_or_create_collection(
+        name=CHROMA_COLLECTION,
+        metadata={"hnsw:space": "cosine"},
+    )
+    logger.info("ChromaDB collection ready: %s", CHROMA_COLLECTION)
+    return _chroma_collection
 
 
 async def add_to_chroma(
@@ -418,20 +411,18 @@ async def add_to_chroma(
     ids: list[str],
 ) -> int:
     """Embed and store documents in ChromaDB. Returns number added."""
-    await ensure_collection()
     embeddings = await shard_embed_texts(documents)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}/add",
-            json={
-                "ids": ids,
-                "embeddings": embeddings,
-                "documents": documents,
-                "metadatas": metadatas,
-            },
+    try:
+        collection = await asyncio.to_thread(get_chroma_collection)
+        await asyncio.to_thread(
+            collection.add,
+            ids=ids,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=metadatas,
         )
-        if resp.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail=f"ChromaDB add failed: {resp.text}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ChromaDB add failed: {e}")
     return len(documents)
 
 
@@ -892,17 +883,10 @@ async def status() -> dict:
 
     # Check ChromaDB
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{CHROMADB_URL}/api/v1/heartbeat")
-            results["rag"] = "ok" if r.status_code == 200 else "degraded"
-            # Get document count
-            try:
-                rc = await client.get(f"{CHROMADB_URL}/api/v1/collections/paperknight")
-                if rc.status_code == 200:
-                    count = rc.json().get("metadata", {}).get("count", "?")
-                    results["rag_documents"] = count
-            except Exception:
-                results["rag_documents"] = "?"
+        collection = await asyncio.to_thread(get_chroma_collection)
+        count = await asyncio.to_thread(collection.count)
+        results["rag"] = "ok"
+        results["rag_documents"] = count
     except Exception:
         results["rag"] = "offline"
         results["rag_documents"] = 0
@@ -1110,22 +1094,18 @@ async def rag_add_cve(req: AddCveRequest) -> dict:
 @app.get("/rag/search")
 async def rag_search(query: str, n_results: int = 5) -> dict:
     """Search RAG knowledge base without generating a response."""
-    await ensure_collection()
     embeddings = await asyncio.to_thread(embed, [query])
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}/query",
-            json={
-                "query_embeddings": embeddings,
-                "n_results": n_results,
-                "include": ["documents", "metadatas", "distances"],
-            },
+    try:
+        collection = await asyncio.to_thread(get_chroma_collection)
+        data = await asyncio.to_thread(
+            collection.query,
+            query_embeddings=embeddings,
+            n_results=n_results,
+            include=["documents", "metadatas", "distances"],
         )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="ChromaDB query failed")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ChromaDB query failed: {e}")
 
-    data = resp.json()
     results = []
     docs = data.get("documents", [[]])[0]
     metas = data.get("metadatas", [[]])[0]
@@ -1145,9 +1125,13 @@ async def rag_search(query: str, n_results: int = 5) -> dict:
 @app.delete("/rag/reset")
 async def rag_reset() -> dict:
     """Delete and recreate the RAG collection. Use with care."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await client.delete(f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}")
-    await ensure_collection()
+    global _chroma_collection
+    host = CHROMADB_URL.replace("http://", "").replace("https://", "").split(":")[0]
+    port = int(CHROMADB_URL.split(":")[-1]) if ":" in CHROMADB_URL else 8000
+    client = chromadb.HttpClient(host=host, port=port)
+    await asyncio.to_thread(client.delete_collection, CHROMA_COLLECTION)
+    _chroma_collection = None
+    await asyncio.to_thread(get_chroma_collection)
     logger.warning("RAG collection reset")
     return {"status": "reset", "collection": CHROMA_COLLECTION}
 
