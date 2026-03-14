@@ -29,10 +29,10 @@ def get_coordinator_url() -> str:
         if profile_path.exists():
             with open(profile_path) as f:
                 p = yaml.safe_load(f) or {}
-                return p.get("coordinator_url", "http://localhost:30800")
+                return p.get("coordinator_url", "https://localhost:30800")
     except Exception:
         pass
-    return "http://localhost:30800"
+    return "https://localhost:30800"
 
 
 def get_profile_name() -> str:
