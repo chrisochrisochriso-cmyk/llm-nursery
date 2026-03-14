@@ -38,7 +38,7 @@ echo -e "${BOLD}║      paperknight AI Installer     ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════╝${RESET}"
 echo ""
 echo "Private AI on your GMKtec. No cloud. No API costs."
-echo "Llama 3.1 8B runs entirely on your hardware."
+echo "Llama 3.2 3B runs entirely on your hardware."
 echo ""
 
 # Check we're running from the cloned repo
@@ -156,11 +156,11 @@ if [[ "$IS_LAPTOP" == "false" ]]; then
         fi
     done
 
-    info "Pulling Llama 3.1 8B (~5GB - takes a while on first run)..."
+    info "Pulling Llama 3.2 3B (~2GB - takes a while on first run)..."
     echo "  Model will be cached on disk for future starts."
-    docker compose exec -T ollama ollama pull llama3.1:8b \
+    docker compose exec -T ollama ollama pull llama3.2:3b \
         || die "Model pull failed - check network: docker compose logs ollama"
-    ok "Llama 3.1 8B ready"
+    ok "Llama 3.2 3B ready"
 
     # On WSL2, get the Windows-visible IP
     BOARD_IP=$(ip route show | grep -oP 'src \K[\d.]+' | head -1 2>/dev/null \

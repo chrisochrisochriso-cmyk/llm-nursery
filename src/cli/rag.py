@@ -25,6 +25,7 @@ SUPPORTED_EXTENSIONS = {
     ".js", ".ts", ".java", ".rb", ".sh", ".bash",
     ".yaml", ".yml", ".json", ".toml", ".conf", ".cfg",
     ".md", ".txt", ".log", ".xml", ".html",
+    ".pdf",
 }
 
 
@@ -152,7 +153,14 @@ def _add_file(coordinator: str, filepath: Path, quiet: bool, json_output: bool) 
         return
 
     try:
-        content = filepath.read_text(errors="replace")
+        if filepath.suffix.lower() == ".pdf":
+            import pypdf
+            reader = pypdf.PdfReader(str(filepath))
+            content = "\n\n".join(
+                page.extract_text() or "" for page in reader.pages
+            )
+        else:
+            content = filepath.read_text(errors="replace")
     except Exception as e:
         err_console.print(f"[red]Cannot read {filepath}:[/red] {e}")
         raise typer.Exit(1)
@@ -162,7 +170,7 @@ def _add_file(coordinator: str, filepath: Path, quiet: bool, json_output: bool) 
             console.print(f"[yellow]Skipping[/yellow] {filepath} (too short)")
         return
 
-    doc_type = "text" if filepath.suffix.lower() in {".md", ".txt", ".log"} else "code"
+    doc_type = "text" if filepath.suffix.lower() in {".md", ".txt", ".log", ".pdf"} else "code"
     _add_content(coordinator, content, str(filepath), doc_type, quiet, json_output)
 
 

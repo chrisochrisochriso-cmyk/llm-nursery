@@ -35,3 +35,6 @@ Thumbs.db
 
 # TLS certs - never commit private keys
 certs/
+
+# Persistent storage (bind mounts - ChromaDB data + history)
+storage/
