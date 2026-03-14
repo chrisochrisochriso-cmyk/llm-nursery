@@ -47,7 +47,7 @@ logger = logging.getLogger("pk-coordinator")
 OLLAMA_URL      = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME      = os.environ.get("MODEL_NAME", "llama3.1:8b")
 CHROMADB_URL    = os.environ.get("CHROMADB_URL", "http://localhost:8000")
-RAG_TOP_K       = int(os.environ.get("RAG_TOP_K", "5"))
+RAG_TOP_K       = int(os.environ.get("RAG_TOP_K", "2"))
 HISTORY_PATH    = Path(os.environ.get("HISTORY_PATH", "/storage/history"))
 INFERENCE_MODE  = os.environ.get("INFERENCE_MODE", "ollama")  # ollama | pipeline
 
@@ -113,12 +113,15 @@ SCAN_SUFFIX = (
 # ---------------------------------------------------------------------------
 
 async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts using shard-0 hidden states (Qwen2.5-3B quality).
-    Mean-pools hidden states [1, seq_len, 2048] -> [2048] float32 vector.
-    Falls back to local all-MiniLM if shard-0 is unavailable.
+    """Embed texts using shard-0 hidden states, or local all-MiniLM fallback.
+    Skips shard attempt entirely when INFERENCE_MODE=ollama (shards not running).
     """
+    # Fast path: shards not in use, go straight to local embedder
+    if INFERENCE_MODE != "pipeline":
+        return await asyncio.to_thread(embed, texts)
+
     results = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
         for text in texts:
             try:
                 r = await client.post(
@@ -129,7 +132,6 @@ async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
                 hs = r.json()["hidden_states"]
                 raw = base64.b64decode(hs["b64"])
                 arr = np.frombuffer(raw, dtype=np.float16).reshape(hs["shape"])
-                # Mean pool across sequence dimension → [hidden_size]
                 vec = arr[0].mean(axis=0).astype(np.float32)
                 results.append(vec.tolist())
             except Exception as e:
