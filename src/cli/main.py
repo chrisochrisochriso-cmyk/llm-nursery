@@ -113,16 +113,16 @@ def stream_response(
         print()
         return "".join(full_text)
 
-    # Collect silently while showing spinner
-    with console.status(f"[dim]{thinking_msg}...[/dim]", spinner="dots"):
-        for chunk in response.iter_text():
-            full_text.append(chunk)
-
-    result = "".join(full_text)
-    console.print()
-    console.print(Markdown(result))
-    console.print()
-    return result
+    # Show spinner until first token arrives, then stream live
+    first = True
+    for chunk in response.iter_text():
+        if first:
+            console.print(f"\n[dim]{thinking_msg}...[/dim]")
+            first = False
+        print(chunk, end="", flush=True)
+        full_text.append(chunk)
+    print("\n")
+    return "".join(full_text)
 
 
 def print_error(msg: str, quiet: bool = False) -> None:
