@@ -18,21 +18,10 @@ async def test():
     w.write((json.dumps(event) + "\n").encode())
     await w.drain()
     print("sent, waiting...")
-    total_audio = 0
-    for _ in range(100):
-        line = await asyncio.wait_for(r.readline(), timeout=10.0)
-        if not line:
-            break
-        # Strip only the newline, not spaces - payload length is exact
-        msg = json.loads(line.rstrip(b"\n"))
-        payload_length = msg.get("payload_length", 0)
-        print("got:", msg.get("type"), "payload:", payload_length)
-        if payload_length > 0:
-            await r.readexactly(payload_length)
-            total_audio += payload_length
-        if msg["type"] == "audio-stop":
-            print("done! total audio bytes:", total_audio)
-            break
+    # Read raw bytes to understand actual protocol format
+    raw = await asyncio.wait_for(r.read(4096), timeout=10.0)
+    print("raw bytes (first 300):", raw[:300])
+    print("repr:", repr(raw[:300]))
     w.close()
 
 asyncio.run(test())
