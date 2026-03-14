@@ -75,6 +75,9 @@ services:
       - SHARD_1_URL=http://shard-1:8080
       - SHARD_2_URL=http://shard-2:8080
       - SHARD_3_URL=http://shard-3:8080
+      - WHISPER_URL=http://whisper:9000
+      - PIPER_URL=http://piper:10200
+      - PIPER_VOICE=en_GB-alan-medium
     volumes:
       - ./certs:/certs:ro
       - ./storage/history:/storage/history
@@ -85,6 +88,39 @@ services:
     depends_on:
       - ollama
       - chromadb
+      - whisper
+      - piper
+
+  # ---------------------------------------------------------------------------
+  # Voice pipeline - local STT (Whisper) + TTS (Piper)
+  # Replaces browser Web Speech API - fully private, no cloud audio
+  # ---------------------------------------------------------------------------
+
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: pk-whisper
+    restart: unless-stopped
+    environment:
+      - ASR_MODEL=medium
+      - ASR_ENGINE=openai_whisper
+    volumes:
+      - whisper-cache:/root/.cache/whisper
+    mem_limit: 1500m
+    cpus: '2.0'
+    # Port 9000 internal only - coordinator calls http://whisper:9000
+
+  piper:
+    image: linuxserver/piper:latest
+    container_name: pk-piper
+    restart: unless-stopped
+    environment:
+      - PIPER_VOICE=en_GB-alan-medium
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    mem_limit: 256m
+    cpus: '1.0'
+    # Port 10200 internal only - coordinator calls http://piper:10200
 
   # ---------------------------------------------------------------------------
   # Pipeline shards - Llama 3.2 3B split across 4 containers
@@ -120,4 +156,5 @@ services:
 volumes:
   ollama-data:    # llama3.2:3b GGUF (large, cache-like, no host visibility needed)
   hf-cache:       # Qwen2.5-3B HuggingFace weights (shared by all shards)
+  whisper-cache:  # Whisper medium model weights (~1.5GB, downloaded once)
   # chroma-data and history-data removed - now bind-mounted to ./storage/ for persistence

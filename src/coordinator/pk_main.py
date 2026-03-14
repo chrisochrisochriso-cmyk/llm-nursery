@@ -30,8 +30,8 @@ import chromadb
 import httpx
 import numpy as np
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -50,6 +50,9 @@ CHROMADB_URL    = os.environ.get("CHROMADB_URL", "http://localhost:8000")
 RAG_TOP_K       = int(os.environ.get("RAG_TOP_K", "2"))
 HISTORY_PATH    = Path(os.environ.get("HISTORY_PATH", "/storage/history"))
 INFERENCE_MODE  = os.environ.get("INFERENCE_MODE", "ollama")  # ollama | pipeline
+WHISPER_URL     = os.environ.get("WHISPER_URL", "http://whisper:9000")
+PIPER_URL       = os.environ.get("PIPER_URL", "http://piper:10200")
+PIPER_VOICE     = os.environ.get("PIPER_VOICE", "en_GB-alan-medium")
 
 SHARD_URLS = {
     0: os.environ.get("SHARD_0_URL", "http://shard-0:8080"),
@@ -666,7 +669,7 @@ WEB_UI_HTML = """<!DOCTYPE html>
   <div class="input-bar">
     <textarea id="input" placeholder="Type your message, or use the mic..." rows="1"
       onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-    <button id="voiceBtn" title="Hold to speak" onclick="toggleVoice()">🎤</button>
+    <button id="voiceBtn" title="Click to start/stop recording" onclick="toggleVoice()">🎤</button>
     <button id="sendBtn" onclick="send()">➤</button>
   </div>
 </div>
@@ -678,9 +681,8 @@ const sendBtn    = document.getElementById('sendBtn');
 const voiceBtn   = document.getElementById('voiceBtn');
 const statusDot  = document.getElementById('statusDot');
 
-let speaking = false;
-let recognition = null;
-let synth = window.speechSynthesis;
+let mediaRecorder = null;
+let audioChunks = [];
 
 // Check status on load
 fetch('/health').then(r => {
@@ -709,13 +711,22 @@ function addBubble(role, text) {
   return div;
 }
 
-function speak(text) {
-  if (!synth) return;
-  synth.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = 0.95;
-  utt.pitch = 1;
-  synth.speak(utt);
+async function speak(text) {
+  try {
+    const resp = await fetch('/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text }),
+    });
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play();
+    audio.onended = () => URL.revokeObjectURL(url);
+  } catch (e) {
+    console.warn('TTS unavailable:', e);
+  }
 }
 
 async function send() {
@@ -775,42 +786,64 @@ async function send() {
   }
 }
 
-// Voice input
-function toggleVoice() {
-  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    alert('Voice input is not supported in this browser. Try Chrome or Edge.');
+// Voice input - local Whisper STT (no cloud)
+async function toggleVoice() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
     return;
   }
 
-  if (speaking) {
-    recognition && recognition.stop();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    alert('Microphone access denied. Please allow microphone access and try again.');
     return;
   }
 
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-GB';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
+  audioChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/wav') ? 'audio/wav' : 'audio/webm;codecs=opus';
+  mediaRecorder = new MediaRecorder(stream, { mimeType });
 
-  recognition.onstart = () => {
-    speaking = true;
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) audioChunks.push(e.data);
+  };
+
+  mediaRecorder.onstart = () => {
     voiceBtn.classList.add('recording');
     voiceBtn.textContent = '⏹';
   };
-  recognition.onresult = (e) => {
-    inputEl.value = e.results[0][0].transcript;
-    autoResize(inputEl);
-    send();
-  };
-  recognition.onerror = () => {};
-  recognition.onend = () => {
-    speaking = false;
+
+  mediaRecorder.onstop = async () => {
     voiceBtn.classList.remove('recording');
     voiceBtn.textContent = '🎤';
+    stream.getTracks().forEach(t => t.stop());
+
+    const blob = new Blob(audioChunks, { type: mimeType });
+    const formData = new FormData();
+    formData.append('audio', blob, 'recording.webm');
+
+    const thinking = addBubble('thinking', 'Listening...');
+    try {
+      const resp = await fetch('/transcribe', { method: 'POST', body: formData });
+      thinking.remove();
+      if (!resp.ok) {
+        addBubble('assistant', 'Sorry, I could not hear that. Please try again.');
+        return;
+      }
+      const data = await resp.json();
+      if (data.transcript) {
+        inputEl.value = data.transcript;
+        autoResize(inputEl);
+        send();
+      }
+    } catch (e) {
+      thinking.remove();
+      addBubble('assistant', 'Transcription failed. Is PaperKnight running?');
+    }
   };
 
-  recognition.start();
+  mediaRecorder.start();
 }
 </script>
 </body>
@@ -875,6 +908,10 @@ class SearchRequest(BaseModel):
     n_results: int = 5
 
 
+class TtsRequest(BaseModel):
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -886,6 +923,56 @@ async def health() -> dict:
         "model": MODEL_NAME,
         "rag": CHROMADB_URL,
     }
+
+
+@app.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)) -> dict:
+    """Accept audio blob from browser, return transcript via local Whisper."""
+    audio_bytes = await audio.read()
+    if len(audio_bytes) < 1000:
+        raise HTTPException(status_code=400, detail="Audio too short")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                f"{WHISPER_URL}/asr",
+                params={"output": "json", "language": "en"},
+                files={"audio_file": (
+                    audio.filename or "audio.webm",
+                    audio_bytes,
+                    audio.content_type or "audio/webm",
+                )},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Whisper unavailable: {e}")
+
+    transcript = resp.json().get("text", "").strip()
+    if not transcript:
+        raise HTTPException(status_code=422, detail="No speech detected")
+
+    logger.info("Transcribed: %s", transcript[:80])
+    return {"transcript": transcript}
+
+
+@app.post("/tts")
+async def tts(req: TtsRequest) -> Response:
+    """Convert text to speech via local Piper, return WAV audio."""
+    text = req.text.strip()[:2000]
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(
+                f"{PIPER_URL}/api/tts",
+                json={"text": text, "voice": PIPER_VOICE},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Piper unavailable: {e}")
+
+    return Response(content=resp.content, media_type="audio/wav")
 
 
 @app.get("/status")
