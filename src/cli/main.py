@@ -113,14 +113,20 @@ def stream_response(
         print()
         return "".join(full_text)
 
-    # Show spinner until first token arrives, then stream live
-    first = True
-    for chunk in response.iter_text():
-        if first:
-            console.print(f"\n[dim]{thinking_msg}...[/dim]")
-            first = False
+    # Spinner until first token, then stream live
+    iterator = response.iter_text()
+    with console.status(f"[dim]{thinking_msg}...[/dim]", spinner="dots"):
+        first_chunk = next(iterator, None)
+
+    if first_chunk:
+        console.print()
+        print(first_chunk, end="", flush=True)
+        full_text.append(first_chunk)
+
+    for chunk in iterator:
         print(chunk, end="", flush=True)
         full_text.append(chunk)
+
     print("\n")
     return "".join(full_text)
 
