@@ -105,7 +105,7 @@ services:
       - ASR_ENGINE=openai_whisper
     volumes:
       - whisper-cache:/root/.cache/whisper
-    mem_limit: 1500m
+    # no mem_limit: spikes during 1.42GB model download, drops to ~900MB steady state
     cpus: '2.0'
     # Port 9000 internal only - coordinator calls http://whisper:9000
 
