@@ -48,6 +48,21 @@ add_url "https://www.nhs.uk/conditions/depression/" "Depression"
 add_url "https://www.nhs.uk/conditions/high-blood-pressure-hypertension/" "High blood pressure"
 
 # ---------------------------------------------------------------------------
+# Common illnesses
+# ---------------------------------------------------------------------------
+echo ""
+echo "Common illnesses..."
+add_url "https://www.nhs.uk/conditions/common-cold/" "Common cold"
+add_url "https://www.nhs.uk/conditions/flu/" "Flu"
+add_url "https://www.nhs.uk/conditions/tonsillitis/" "Tonsillitis"
+add_url "https://www.nhs.uk/conditions/diarrhoea-and-vomiting/" "Gastroenteritis"
+add_url "https://www.nhs.uk/conditions/bronchitis/" "Bronchitis"
+add_url "https://www.nhs.uk/conditions/sinusitis-sinus-infection/" "Sinusitis"
+add_url "https://www.nhs.uk/conditions/earache/" "Earache"
+add_url "https://www.nhs.uk/conditions/sore-throat/" "Sore throat"
+add_url "https://www.nhs.uk/conditions/fever-in-adults/" "Fever"
+
+# ---------------------------------------------------------------------------
 # Common conditions
 # ---------------------------------------------------------------------------
 echo ""
