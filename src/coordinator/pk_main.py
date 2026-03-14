@@ -179,7 +179,9 @@ async def query_rag(query: str) -> Optional[str]:
         ]
         for doc, meta, _ in relevant:
             source = meta.get("source", "unknown") if meta else "unknown"
-            context_parts.append(f"[NHS SOURCE: {source}]\n{doc}")
+            # Cap each chunk at 600 chars to stay within Ollama's context window
+            snippet = doc[:600] + ("..." if len(doc) > 600 else "")
+            context_parts.append(f"[NHS SOURCE: {source}]\n{snippet}")
 
         return "\n\n".join(context_parts)
 
@@ -924,7 +926,7 @@ async def ask(req: InferRequest):
     if req.stream:
         async def response_stream():
             chunks = []
-            async for chunk in await generate(system_prompt, req.message, stream=True):
+            async for chunk in await generate(system_prompt, req.message, stream=True, num_predict=768):
                 chunks.append(chunk)
                 yield chunk
             # Log after streaming completes
