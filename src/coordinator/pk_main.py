@@ -919,6 +919,14 @@ async def ask(req: InferRequest):
     """General question - streams response."""
     system_prompt = SYSTEM_PROMPTS.get(req.profile, SYSTEM_PROMPTS["default"])
 
+    # Inject current time and date so the model always knows when it is
+    now = datetime.now()
+    time_context = (
+        f"Current date: {now.strftime('%A %d %B %Y')}. "
+        f"Current time: {now.strftime('%H:%M')}."
+    )
+    system_prompt = f"{system_prompt}\n\n{time_context}"
+
     # RAG: inject relevant context before inference
     rag_context = await query_rag(req.message)
     if rag_context:
