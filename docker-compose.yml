@@ -64,7 +64,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - CHROMADB_URL=http://chromadb:8000
       - MODEL_NAME=llama3.1:8b
-      - INFERENCE_MODE=pipeline
+      - INFERENCE_MODE=ollama
       - SHARD_0_URL=http://shard-0:8080
       - SHARD_1_URL=http://shard-1:8080
       - SHARD_2_URL=http://shard-2:8080

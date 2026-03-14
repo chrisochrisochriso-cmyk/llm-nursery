@@ -24,7 +24,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
+import base64
+
 import httpx
+import numpy as np
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -107,10 +110,36 @@ SCAN_SUFFIX = (
 # RAG: query ChromaDB for relevant context
 # ---------------------------------------------------------------------------
 
+async def shard_embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed texts using shard-0 hidden states (Qwen2.5-3B quality).
+    Mean-pools hidden states [1, seq_len, 2048] -> [2048] float32 vector.
+    Falls back to local all-MiniLM if shard-0 is unavailable.
+    """
+    results = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for text in texts:
+            try:
+                r = await client.post(
+                    f"{SHARD_URLS[0]}/embed",
+                    json={"text": text, "temperature": 0.0},
+                )
+                r.raise_for_status()
+                hs = r.json()["hidden_states"]
+                raw = base64.b64decode(hs["b64"])
+                arr = np.frombuffer(raw, dtype=np.float16).reshape(hs["shape"])
+                # Mean pool across sequence dimension → [hidden_size]
+                vec = arr[0].mean(axis=0).astype(np.float32)
+                results.append(vec.tolist())
+            except Exception as e:
+                logger.warning("Shard embed failed, falling back to local: %s", e)
+                results.append(await asyncio.to_thread(embed, [text])[0])
+    return results
+
+
 async def query_rag(query: str) -> Optional[str]:
     """Query ChromaDB for relevant documents. Returns injected context string or None."""
     try:
-        embeddings = await asyncio.to_thread(embed, [query])
+        embeddings = await shard_embed_texts([query])
         async with httpx.AsyncClient(timeout=5.0) as client:
             payload = {
                 "query_embeddings": embeddings,
@@ -386,7 +415,7 @@ async def add_to_chroma(
 ) -> int:
     """Embed and store documents in ChromaDB. Returns number added."""
     await ensure_collection()
-    embeddings = await asyncio.to_thread(embed, documents)
+    embeddings = await shard_embed_texts(documents)
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             f"{CHROMADB_URL}/api/v1/collections/{CHROMA_COLLECTION}/add",
